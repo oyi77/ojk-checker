@@ -115,20 +115,6 @@ class SchedulerDaemon:
         logger.info(f"schedule_execute: id={schedule_id} | name={sched['name']}")
 
         db.update_schedule_last_run(schedule_id)
-        debitur = db.get_debitur(sched["debitur_id"])
-
-        if not debitur or not debitur.get("nomor_pendaftaran"):
-            errors = db.increment_schedule_errors(schedule_id)
-            db.add_log(
-                "No nomor pendaftaran for debitur",
-                "ERROR",
-                debitur_id=sched["debitur_id"],
-                schedule_id=schedule_id,
-            )
-            if errors >= sched["max_errors"]:
-                db.toggle_schedule(schedule_id, False)
-                logger.warning(f"schedule_disabled_max_errors: id={schedule_id} | errors={errors}")
-            return
 
         try:
             result = self._orchestrator.check_status(
@@ -138,10 +124,10 @@ class SchedulerDaemon:
                 notify_email=bool(sched["notify_email"]),
             )
             logger.info(
-                "schedule_done", id=schedule_id, name=sched["name"], status=result.get("status")
+                f"schedule_done: id={schedule_id} | name={sched['name']} | status={result.get('status')}"
             )
         except Exception as e:
-            logger.error(f"schedule_execute_error: id={schedule_id}")
+            logger.error(f"schedule_execute_error: id={schedule_id} | error={e}")
             db.add_log(str(e), "ERROR", debitur_id=sched["debitur_id"], schedule_id=schedule_id)
             errors = db.increment_schedule_errors(schedule_id)
             if errors >= sched["max_errors"]:
