@@ -1,0 +1,92 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "slik-checker"
+version = "1.0.0"
+description = "Automated periodic SLIK data checking via iDebKu OJK"
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+include = ["slik_checker*"]
+exclude = ["data*", "tests*"]
+keywords = ["slik", "ojk", "idebku", "credit", "automation"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "requests>=2.31.0",
+    "beautifulsoup4>=4.12.0",
+    "selenium>=4.15.0",
+    "apscheduler>=3.10.0",
+    "pytesseract>=0.3.10",
+    "Pillow>=10.0.0",
+    "python-dotenv>=1.0.0",
+    "easyocr>=1.7.0",
+    "ddddocr>=1.0.0",
+    "numpy>=1.24.0",
+    "streamlit>=1.28.0",
+    "pandas>=2.0.0",
+    "structlog>=24.0.0",
+    "tenacity>=8.0.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+    "pytest-mock>=3.14.0",
+    "ruff>=0.8.0",
+    "mypy>=1.13.0",
+    "pre-commit>=3.0.0",
+]
+test = ["pytest>=8.0.0", "pytest-cov>=5.0.0", "pytest-mock>=3.14.0"]
+
+[project.scripts]
+slik-checker = "slik_checker.cli:main"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+exclude = [".venv", "venv", "build", "dist", ".git"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+
+[tool.mypy]
+python_version = "3.10"
+strict = false
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+addopts = "-v --tb=short --strict-markers"
+markers = [
+    "slow: marks tests as slow",
+    "integration: marks tests as integration tests",
+    "live: marks tests that hit live iDebKu API",
+]
+
+[tool.coverage.run]
+source = ["slik_checker"]
+omit = ["slik_checker/ui/*", "tests/*"]
+
+[tool.coverage.report]
+fail_under = 70
