@@ -89,7 +89,12 @@ class SchedulerDaemon:
                         )
                         logger.info(f"schedule_loaded: id={sched['id']} | name={sched['name']}")
                     except Exception as e:
-                        logger.error(f"schedule_load_failed: id={sched['id']}")
+                        logger.error(f"schedule_load_failed: id={sched['id']} | error={e}")
+                        db.add_log(
+                            message=f"Gagal load schedule {sched['name']}: {str(e)}",
+                            level="ERROR",
+                            schedule_id=sched["id"],
+                        )
 
             for job_id in current_jobs:
                 sid = int(job_id.replace("schedule_", ""))
@@ -97,11 +102,20 @@ class SchedulerDaemon:
                     try:
                         self._scheduler.remove_job(job_id)
                         logger.info(f"schedule_removed: id={sid}")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning(f"schedule_remove_failed: id={sid} | error={e}")
+                        db.add_log(
+                            message=f"Gagal hapus schedule: {str(e)}",
+                            level="WARNING",
+                            schedule_id=sid,
+                        )
 
         except Exception as e:
             logger.error(f"sync_failed: error={str(e)}")
+            db.add_log(
+                message=f"Scheduler sync gagal: {str(e)}",
+                level="ERROR",
+            )
 
     def _execute_schedule(self, schedule_id: int) -> None:
         sched = db.get_schedule(schedule_id)

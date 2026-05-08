@@ -10,6 +10,7 @@ import requests
 
 from slik_checker.config import settings
 from slik_checker.logging_config import get_logger
+from slik_checker.models import db
 
 logger = get_logger(__name__)
 
@@ -38,6 +39,7 @@ class Notifier:
             return False
         except Exception as e:
             logger.error(f"telegram_send_failed: error={str(e)}")
+            db.add_log(message=f"Telegram gagal: {str(e)}", level="ERROR")
             return False
 
     def send_email(self, subject: str, html_body: str) -> bool:
@@ -62,6 +64,7 @@ class Notifier:
             return True
         except Exception as e:
             logger.error(f"email_send_failed: error={str(e)}")
+            db.add_log(message=f"Email gagal: {str(e)}", level="ERROR")
             return False
 
     def notify_registration(

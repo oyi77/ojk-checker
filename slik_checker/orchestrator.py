@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import traceback
 from typing import Any, Optional
 
 from slik_checker.captcha import captcha_solver
@@ -123,6 +124,13 @@ class Orchestrator:
             scraper.prime_session(jd_id, kw_id)
         except Exception as e:
             db.add_result(debitur_id, "ERROR", False)
+            db.add_log(
+                message=f"Error prime_session: {str(e)}",
+                level="ERROR",
+                detail=traceback.format_exc(),
+                debitur_id=debitur_id,
+            )
+            logger.error(f"prime_session_error: debitur_id={debitur_id} | {e}")
             return {
                 "debitur_id": debitur_id,
                 "success": False,
@@ -136,7 +144,14 @@ class Orchestrator:
                 attempt = self._one_attempt(nik, jd_id, kw_id, ident_id)
                 if attempt["status"] in ("QUOTA_FULL", "NEXT_STEP", "SUBMITTED", "REGISTERED"):
                     break
-            except Exception:
+            except Exception as e:
+                db.add_log(
+                    message=f"Error attempt: {str(e)}",
+                    level="ERROR",
+                    detail=traceback.format_exc(),
+                    debitur_id=debitur_id,
+                )
+                logger.error(f"attempt_error: debitur_id={debitur_id} | {e}")
                 time.sleep(1)
                 continue
 
