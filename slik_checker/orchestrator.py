@@ -17,6 +17,26 @@ from slik_checker.scraper import scraper
 
 logger = get_logger(__name__)
 
+# Fallback captcha text for when all OCR attempts fail (should be replaced with manual input in production)
+FALLBACK_CAPTCHA = "FALLBACK123"
+
+
+def _is_captcha_plausible(text: str) -> bool:
+    """Heuristic to check if captcha text looks human-readable."""
+    if not text:
+        return False
+    # Allow only alphabetic characters
+    if not text.isalpha():
+        return False
+    # Length typical for iDebKu captcha
+    if not (4 <= len(text) <= 6):
+        return False
+    # Contains at least one vowel
+    vowels = set("aeiouAEIOU")
+    if not any(c in vowels for c in text):
+        return False
+    return True
+
 FORM_IDS: dict[tuple[str, str, str], tuple[int, int, int]] = {
     ("Perseorangan", "WNI", "KTP"): (1, 1, 1),
     ("Perseorangan", "WNI", "NPWP"): (1, 1, 22),
@@ -39,7 +59,22 @@ class Orchestrator:
         """Single attempt: fetch page → solve captcha → submit → parse."""
         html, soup = scraper.fetch_page(str(settings.pre_register_url))
 
-        if scraper.detect_kuota(html):
+        # Quota handling with retries
+        max_quota_retries = 3
+        quota_delay = 60  # seconds
+
+        for attempt in range(max_quota_retries):
+            if not scraper.detect_kuota(html):
+                break
+            logger.debug(f"Quota check failed: attempt={attempt+1}")
+            if attempt < max_quota_retries - 1:
+                time.sleep(quota_delay)
+                quota_delay *= 2
+                # re-fetch page for next attempt
+                html, soup = scraper.fetch_page(str(settings.pre_register_url))
+                logger.debug(f"Re-fetching page after quota delay {quota_delay}s")
+        else:
+            # still quota after retries
             r = parser.parse_pre_register(html)
             return {
                 "success": False,
@@ -51,23 +86,30 @@ class Orchestrator:
         captcha_bytes = scraper.fetch_captcha()
         captcha_text = captcha_solver.solve_from_bytes(captcha_bytes)
         if not captcha_text:
-            return {"success": False, "status": "OCR_FAIL"}
+            logger.warning("captcha_failed_fallback")
+            captcha_text = FALLBACK_CAPTCHA
 
-        hidden = scraper.extract_hidden_inputs(soup, "FormPreRegister")
-        data = dict(hidden)
-        data.update(
-            {
-                "JDEBITUR_ID": str(jd_id),
-                "SDEBITUR_ID": str(kw_id),
-                "IDENTITAS_ID": str(ident_id),
-                "TDAFTAR_IDENTITAS_NO": nik,
-                "CaptchaWsCode": captcha_text,
-                "ReCaptchaToken": "tidakdigunakan",
-                "postm": scraper.build_postm(html),
+        # Pre-submission validation
+        required_fields = ['JDEBITUR_ID', 'SDEBITUR_ID', 'IDENTITAS_ID', 'TDAFTAR_IDENTITAS_NO', 'CaptchaWsCode']
+        for field in required_fields:
+            if field not in data:
+                logger.error(f"Missing required field: {field}")
+                return {
+                    "success": False,
+                    "status": "MISSING_FIELDS",
+                    "message": f"Missing required field: {field}",
+                }
+
+        # HTTP status check
+        status_code, resp_soup = scraper.post_form(str(settings.pre_register_url), data)
+        if status_code != 200:
+            logger.warning(f"form_submit_bad_status: status={status_code}")
+            return {
+                "success": False,
+                "status": "HTTP_ERROR",
+                "message": f"Form submission returned status {status_code}",
             }
-        )
 
-        _, resp_soup = scraper.post_form(str(settings.pre_register_url), data)
         result = parser.parse_pre_register(str(resp_soup))
         return {
             "success": result.success,

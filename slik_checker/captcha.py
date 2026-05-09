@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import io
+import warnings
 from collections import Counter
 from typing import Callable, Optional
+
+# Suppress MPS pin_memory warning on Apple Silicon
+warnings.filterwarnings("ignore", message="'pin_memory' argument is set as true but not supported on MPS now, device pinned memory won't be used.")
 
 import numpy as np
 from PIL import Image
@@ -136,6 +140,7 @@ class CaptchaSolver:
             logger.info(f"captcha_consensus: result={winner}")
             return winner
 
+        # No consensus - return winner but log warning
         logger.info(f"captcha_no_consensus: result={winner}")
         return winner
 
