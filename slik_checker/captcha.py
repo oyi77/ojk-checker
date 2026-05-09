@@ -152,5 +152,61 @@ class CaptchaSolver:
         img = Image.open(path)
         return self.solve(img)
 
+    def solve_external(self, img: Image.Image) -> Optional[str]:
+        """Fallback to external captcha solving service (e.g., 2Captcha)."""
+        api_key = settings.external_captcha_api_key
+        if not api_key:
+            logger.debug("external_captcha_not_configured")
+            return None
+
+        import base64
+        import time
+        import requests
+        import urllib.parse
+
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode()
+
+        svc_url = str(settings.external_captcha_service_url)
+        poll_url = str(settings.external_captcha_result_url)
+        poll_int = settings.external_captcha_poll_interval
+        timeout = settings.external_captcha_timeout
+
+        try:
+            # Submit
+            resp = requests.post(
+                svc_url,
+                data={"key": api_key.get_secret_value(), "method": "base64", "body": b64, "json": 1},
+                timeout=30,
+            )
+            j = resp.json()
+            if j.get("status") != 1:
+                logger.warning(f"external_captcha_submit_failed: {j}")
+                return None
+            captcha_id = j["request"]
+
+            # Poll for result
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                time.sleep(poll_int)
+                poll_resp = requests.get(
+                    poll_url,
+                    params={"key": api_key.get_secret_value(), "action": "get", "id": captcha_id, "json": 1},
+                    timeout=30,
+                )
+                poll_j = poll_resp.json()
+                if poll_j.get("status") == 1:
+                    text = poll_j["request"]
+                    logger.info(f"external_captcha_solved: result={text}")
+                    return self._validate(text)
+                if poll_j.get("request") == "ERROR_CAPTCHA_UNSOLVABLE":
+                    logger.warning("external_captcha_unsolvable")
+                    break
+            logger.warning("external_captcha_timeout")
+        except Exception as e:
+            logger.error(f"external_captcha_error: {e}")
+        return None
+
 
 captcha_solver = CaptchaSolver()

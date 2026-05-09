@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import io
 import time
 import traceback
 from typing import Any, Optional
+
+from PIL import Image
 
 from slik_checker.captcha import captcha_solver
 from slik_checker.config import settings
@@ -85,9 +88,17 @@ class Orchestrator:
 
         captcha_bytes = scraper.fetch_captcha()
         captcha_text = captcha_solver.solve_from_bytes(captcha_bytes)
-        if not captcha_text:
-            logger.warning("captcha_failed_fallback")
-            captcha_text = FALLBACK_CAPTCHA
+
+        # Try external captcha service if local OCR failed
+        if not captcha_text or not _is_captcha_plausible(captcha_text):
+            logger.info(f"local_captcha_failed: text={captcha_text}, trying external service")
+            img = Image.open(io.BytesIO(captcha_bytes))
+            external_text = captcha_solver.solve_external(img)
+            if external_text and _is_captcha_plausible(external_text):
+                logger.info(f"external_captcha_success: {external_text}")
+                captcha_text = external_text
+            else:
+                logger.warning("captcha_failed_all")
 
         # Pre-submission validation
         required_fields = ['JDEBITUR_ID', 'SDEBITUR_ID', 'IDENTITAS_ID', 'TDAFTAR_IDENTITAS_NO', 'CaptchaWsCode']

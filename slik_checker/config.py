@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     captcha_max_length: int = 6
     captcha_min_length: int = 4
     captcha_max_attempts: int = 3
+    # External captcha service (e.g., 2Captcha)
+    external_captcha_api_key: Optional[SecretStr] = None
+    external_captcha_service_url: HttpUrl = HttpUrl("http://2captcha.com/in.php")  # type: ignore[call-arg]
+    external_captcha_result_url: HttpUrl = HttpUrl("http://2captcha.com/res.php")  # type: ignore[call-arg]
+    external_captcha_poll_interval: int = 5  # seconds
+    external_captcha_timeout: int = 120  # seconds
 
     # --- Scheduler ---
     scheduler_timezone: str = "Asia/Jakarta"
