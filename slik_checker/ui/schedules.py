@@ -6,6 +6,7 @@ from slik_checker.models import db
 from slik_checker.orchestrator import orchestrator
 
 CRON_PRESETS = {
+    "Sesi iDebKu OJK (Menit 0-10 tiap sesi)": "0-10 7,9,12,14 * * *",
     "Setiap 6 jam": "0 */6 * * *",
     "Setiap 12 jam": "0 */12 * * *",
     "Setiap hari (06:00)": "0 6 * * *",
