@@ -101,6 +101,7 @@ def show() -> None:
                 {
                     "Nama": s.get("nama"),
                     "Schedule": s["name"],
+                    "Aksi": s.get("action", "check").upper(),
                     "Cron": s["cron_expression"],
                     "Last Run": (s.get("last_run") or "-")[:19],
                     "Errors": s["error_count"],
