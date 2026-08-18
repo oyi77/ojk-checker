@@ -1,8 +1,6 @@
 """Tests for database models."""
 
-import pytest
-from slik_checker.models import Database, db
-from slik_checker.exceptions import DatabaseError
+from slik_checker.models import Database
 
 
 class TestDatabase:

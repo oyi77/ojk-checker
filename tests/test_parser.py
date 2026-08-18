@@ -1,7 +1,6 @@
 """Tests for parser module."""
 
-import pytest
-from slik_checker.parser import Parser, ParseResult
+from slik_checker.parser import Parser
 
 
 class TestParser:
@@ -12,6 +11,16 @@ class TestParser:
         assert result.success is True
         assert result.status == "REGISTERED"
         assert result.nomor_pendaftaran == "REG-001"
+    def test_parse_preregister_nomor_in_swal(self):
+        p = Parser()
+        # A registration number shown inside a popup must count as success even
+        # when the popup type is info/warning (not 'success') — the old code
+        # classified this as ERROR and dropped the nomor.
+        html = "swal({type: 'info', title: 'Pendaftaran Berhasil', html: 'Nomor Pendaftaran: REG-XYZ'})"
+        result = p.parse_pre_register(html)
+        assert result.success is True
+        assert result.status == "REGISTERED"
+        assert result.nomor_pendaftaran == "REG-XYZ"
 
     def test_parse_preregister_captcha_error(self):
         p = Parser()

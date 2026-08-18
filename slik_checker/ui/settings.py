@@ -4,7 +4,6 @@ import streamlit as st
 
 from slik_checker.config import settings
 from slik_checker.models import db
-from slik_checker.scheduler import SchedulerDaemon
 
 
 def show() -> None:

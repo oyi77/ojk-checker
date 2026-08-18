@@ -1,48 +1,53 @@
-# AGENTS.md — ojk-checker
+# AGENTS.md — ojk-checker (slik-checker)
 
 ## This repo
-[One sentence: what this repo does]
-Stack: Python
-Domain: [what this repo is responsible for]
+Automated periodic SLIK (Indonesian credit history / BI Checking) registration and
+status-checking against OJK's public **iDebKu** portal (idebku.ojk.go.id). Submits
+pre-registrations, solves the captcha, and polls registration status on a schedule,
+notifying via Telegram/Email.
+
+Stack: Python 3.10+. Core deps: requests, beautifulsoup4, selenium, apscheduler,
+pytesseract, easyocr, ddddocr, Pillow, streamlit, pandas, pydantic-settings, structlog, tenacity.
+Domain: government-portal web automation (captcha solving + form submission + scheduling).
 
 ## Rules — thin loader, no submodule
-Rules are NOT vendored into this repo. This repo does NOT need a rules submodule.
-`AGENTS.md` is only the repo-local loader: domain, commands, conventions, and pointers to `~/.1ai`.
+Rules are NOT vendored into this repo. Load them centrally from `~/.1ai`:
 
-Engineering rules are enforced by machine-level loaders when `setup-dev.sh` has been run:
-- Claude Code: SessionStart hook injects `~/.1ai/core/RULES.md`
-- OpenCode: plugin injects `~/.1ai/core/RULES.md`
-- OMP: wrapper appends `~/.1ai/core/RULES.md` to launch sessions
-
-Primary rules file:
 ```bash
-cat ~/.1ai/core/RULES.md
+cat ~/.1ai/core/RULES.md      # primary engineering rules
+cat ~/.1ai/core/GATE.md       # pre-ship gate
 ```
 
-Pre-ship gate:
-```bash
-cat ~/.1ai/core/GATE.md
-```
+If `~/.1ai` or auto-load is missing, run `bash ~/.1ai/scripts/setup-dev.sh`.
 
-If `~/.1ai` or auto-load is missing, run:
-```bash
-bash ~/.1ai/scripts/setup-dev.sh
-```
-
-Do NOT add the rules repo as a git submodule. Update rules centrally, then run/sync the thin `AGENTS.md` template.
-
-## Hard rules
+Hard rules (always apply):
 1. Read code before writing code.
-2. No completion claim without literal receipt.
+2. No completion claim without literal receipt (test run / tool output).
 3. Compile/test/use like a real user before claiming work is ready.
-4. Task must match this repo domain.
+4. Task must match this repo domain (iDebKu SLIK automation).
 5. Run GATE.md before commit/PR.
 
 ## Repo-specific conventions
-- [add conventions specific to this repo]
+- **Module layout** (one job each): `orchestrator` (engine), `scraper` (HTTP/session),
+  `parser` (response → status), `captcha` (multi-engine OCR + external fallback),
+  `models` (sqlite repo), `notifier` (telegram/email), `scheduler` (apscheduler daemon),
+  `cli` (argparse entry), `config`/`exceptions`/`logging_config` (cross-cutting).
+- **Error model**: raise `SlikError` subclasses (`CaptchaSolverError`, `ScrapingError`,
+  `QuotaFullError`, ...). Retryable = `CaptchaSolverError`/`ScrapingError`; everything
+  else is structural/fatal and must NOT be silently retried.
+- **Form filling** is name-agnostic (substring match on control names) in
+  `Orchestrator._build_registration_payload` so it survives minor iDebKu markup changes.
+- **Never swallow `Exception`** to retry — that hides `NameError`/programming bugs. Catch
+  the specific `SlikError` subclasses.
+- Tests: pytest, `tests/`, autouse `patch_settings` fixture redirects `db_path` to tmp.
+  Mock `scraper`/`captcha_solver`/`parser`/`notifier`/`db` — do NOT load OCR models or hit
+  the network in unit tests. Coverage gate: 70% (see pyproject `[tool.coverage]`).
+- Lint/format: `ruff` (E/F/I/N/W/UP/B/C4/SIM), `mypy --ignore-missing-imports`.
+- CLI entry: `slik-checker` (`python -m slik_checker.cli`); UI: `streamlit run slik_checker/ui/app.py`.
 
 ## Commands
-- Dev:   `python -m app`
-- Test:  `pytest`
-- Build: `python -m compileall .`
-- Lint:  `ruff check .`
+- Dev:   `python -m slik_checker.cli init` (then `register` / `check` / `schedule` / `run` / `ui`)
+- Test:  `pytest`  (fast unit suite; orchestrator/captcha mocked)
+- Lint:  `ruff check slik_checker`
+- Type:  `mypy slik_checker --ignore-missing-imports`
+- Build: `python -m compileall slik_checker`

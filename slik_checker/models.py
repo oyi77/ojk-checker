@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Generator, Optional
+from typing import Any
 
 from slik_checker.config import settings
 from slik_checker.exceptions import DatabaseError
@@ -37,6 +38,7 @@ CREATE TABLE IF NOT EXISTS schedules (
     debitur_id INTEGER NOT NULL,
     name TEXT NOT NULL,
     cron_expression TEXT NOT NULL,
+    action TEXT NOT NULL DEFAULT 'check',
     enabled INTEGER NOT NULL DEFAULT 1,
     last_run TEXT,
     next_run TEXT,
@@ -82,7 +84,7 @@ CREATE INDEX IF NOT EXISTS idx_logs_created ON logs(created_at);
 
 
 class Database:
-    def __init__(self, db_path: Optional[Path] = None):
+    def __init__(self, db_path: Path | None = None):
         self._db_path = db_path or settings.db_path
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -109,6 +111,14 @@ class Database:
     def initialize(self) -> None:
         with self.connection() as conn:
             conn.executescript(SCHEMA_SQL)
+            # Migration: schedules gained an `action` column ('check' | 'register').
+            # Older databases created before this was added need the column added
+            # without dropping existing rows.
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info(schedules)").fetchall()}
+            if "action" not in cols:
+                conn.execute(
+                    "ALTER TABLE schedules ADD COLUMN action TEXT NOT NULL DEFAULT 'check'"
+                )
             logger.info(f"database_initialized: {self._db_path}")
 
     def upsert_debitur(self, **fields: Any) -> int:
@@ -153,12 +163,12 @@ class Database:
                 (nomor, debitur_id),
             )
 
-    def get_debitur(self, debitur_id: int) -> Optional[dict[str, Any]]:
+    def get_debitur(self, debitur_id: int) -> dict[str, Any] | None:
         with self.connection() as conn:
             row = conn.execute("SELECT * FROM debiturs WHERE id = ?", (debitur_id,)).fetchone()
             return dict(row) if row else None
 
-    def get_debitur_by_nik(self, nik: str) -> Optional[dict[str, Any]]:
+    def get_debitur_by_nik(self, nik: str) -> dict[str, Any] | None:
         with self.connection() as conn:
             row = conn.execute("SELECT * FROM debiturs WHERE nik = ?", (nik,)).fetchone()
             return dict(row) if row else None
@@ -174,24 +184,30 @@ class Database:
             conn.execute("DELETE FROM schedules WHERE debitur_id = ?", (debitur_id,))
             conn.execute("DELETE FROM logs WHERE debitur_id = ?", (debitur_id,))
             conn.execute("DELETE FROM debiturs WHERE id = ?", (debitur_id,))
-
     def add_schedule(
-        self, debitur_id: int, name: str, cron: str, telegram: bool = True, email: bool = False
+        self,
+        debitur_id: int,
+        name: str,
+        cron: str,
+        telegram: bool = True,
+        email: bool = False,
+        action: str = "check",
     ) -> int:
         with self.connection() as conn:
             cursor = conn.execute(
-                "INSERT INTO schedules (debitur_id, name, cron_expression, notify_telegram, notify_email) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (debitur_id, name, cron, int(telegram), int(email)),
+                "INSERT INTO schedules "
+                "(debitur_id, name, cron_expression, notify_telegram, notify_email, action) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (debitur_id, name, cron, int(telegram), int(email), action),
             )
             return cursor.lastrowid
 
-    def get_schedule(self, schedule_id: int) -> Optional[dict[str, Any]]:
+    def get_schedule(self, schedule_id: int) -> dict[str, Any] | None:
         with self.connection() as conn:
             row = conn.execute("SELECT * FROM schedules WHERE id = ?", (schedule_id,)).fetchone()
             return dict(row) if row else None
 
-    def list_schedules(self, debitur_id: Optional[int] = None) -> list[dict[str, Any]]:
+    def list_schedules(self, debitur_id: int | None = None) -> list[dict[str, Any]]:
         with self.connection() as conn:
             if debitur_id:
                 rows = conn.execute(
@@ -253,9 +269,9 @@ class Database:
         debitur_id: int,
         status: str,
         success: bool,
-        nomor: Optional[str] = None,
-        schedule_id: Optional[int] = None,
-        raw: Optional[str] = None,
+        nomor: str | None = None,
+        schedule_id: int | None = None,
+        raw: str | None = None,
     ) -> None:
         with self.connection() as conn:
             conn.execute(
@@ -265,7 +281,7 @@ class Database:
             )
 
     def list_results(
-        self, debitur_id: Optional[int] = None, limit: int = 50
+        self, debitur_id: int | None = None, limit: int = 50
     ) -> list[dict[str, Any]]:
         with self.connection() as conn:
             if debitur_id:
@@ -299,8 +315,8 @@ class Database:
         message: str,
         level: str = "INFO",
         detail: str = "",
-        debitur_id: Optional[int] = None,
-        schedule_id: Optional[int] = None,
+        debitur_id: int | None = None,
+        schedule_id: int | None = None,
     ) -> None:
         with self.connection() as conn:
             conn.execute(
@@ -309,7 +325,7 @@ class Database:
                 (debitur_id, schedule_id, level, message, detail),
             )
 
-    def list_logs(self, debitur_id: Optional[int] = None, limit: int = 100) -> list[dict[str, Any]]:
+    def list_logs(self, debitur_id: int | None = None, limit: int = 100) -> list[dict[str, Any]]:
         with self.connection() as conn:
             if debitur_id:
                 rows = conn.execute(

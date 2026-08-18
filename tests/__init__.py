@@ -1,6 +1,7 @@
 """Test configuration and shared fixtures."""
 
 import pytest
+
 from slik_checker.config import settings
 
 

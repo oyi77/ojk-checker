@@ -22,7 +22,7 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command")
 
     # --- init ---
-    init_parser = sub.add_parser("init", help="Initialize database")
+    sub.add_parser("init", help="Initialize database")
 
     # --- register ---
     reg_parser = sub.add_parser("register", help="Submit a new registration")
@@ -35,11 +35,45 @@ def main() -> None:
     reg_parser.add_argument("--jenis-identitas", default="KTP")
     reg_parser.add_argument("--email", default="")
     reg_parser.add_argument("--nomor-hp", default="")
+    reg_parser.add_argument(
+        "--captcha-mode",
+        choices=["auto", "manual", "vision"],
+        default="auto",
+        help="Captcha mode: auto (vision/external/local), manual (operator types), vision (force vision-LLM)",
+    )
+    reg_parser.add_argument(
+        "--captcha-text",
+        default=None,
+        help="Provide the captcha text directly (free, no OCR). Skips fetching a "
+        "new captcha so the submitted value matches the session's issued captcha.",
+    )
+    reg_parser.add_argument(
+        "--cron",
+        default=None,
+        help="Cron expression (e.g. '10,30 7,9,12,14 * * *'). When set, the "
+        "registration is SCHEDULED (via `cli run`) instead of run immediately.",
+    )
+    reg_parser.add_argument(
+        "--schedule-name",
+        default=None,
+        help="Name for the scheduled registration (defaults to 'Register <nama> (<nik>)').",
+    )
 
     # --- check ---
     check_parser = sub.add_parser("check", help="Check status of a registration")
     check_parser.add_argument("--debitur-id", type=int, required=True)
     check_parser.add_argument("--nomor", default="")
+    check_parser.add_argument(
+        "--captcha-mode",
+        choices=["auto", "manual", "vision"],
+        default="auto",
+        help="Captcha mode (used if the status check triggers a captcha)",
+    )
+    check_parser.add_argument(
+        "--captcha-text",
+        default=None,
+        help="Provide the captcha text directly (free, no OCR).",
+    )
 
     # --- schedule ---
     sched_parser = sub.add_parser("schedule", help="Manage schedules")
@@ -73,7 +107,31 @@ def main() -> None:
 
     elif args.command == "register":
         db.initialize()
+        settings.captcha_mode = args.captcha_mode
+        settings.captcha_override = args.captcha_text
         from slik_checker.orchestrator import orchestrator
+        if args.cron:
+            # Schedule the registration instead of running it now. The debitur row
+            # stores the identity; the daemon runs submit_registration at cron times
+            # until the portal quota is open and the registration succeeds.
+            debitur_id = db.upsert_debitur(
+                nama=args.nama,
+                nik=args.nik,
+                tempat_lahir=args.tempat_lahir,
+                tanggal_lahir=args.tanggal_lahir,
+                kewarganegaraan=args.kewarganegaraan,
+                jenis_identitas=args.jenis_identitas,
+                email=args.email,
+                nomor_hp=args.nomor_hp,
+                jenis_debitur=args.jenis_debitur,
+            )
+            name = args.schedule_name or f"Register {args.nama} ({args.nik})"
+            sid = db.add_schedule(debitur_id, name, args.cron, action="register")
+            print(f"Scheduled registration '{name}' (schedule_id={sid}).")
+            print(f"  cron: {args.cron}  (timezone: {settings.scheduler_timezone})")
+            print("  Start the daemon to run it:  python -m slik_checker.cli run")
+            return
+
 
         result = orchestrator.submit_registration(
             nama=args.nama,
@@ -93,6 +151,8 @@ def main() -> None:
 
     elif args.command == "check":
         db.initialize()
+        settings.captcha_mode = args.captcha_mode
+        settings.captcha_override = args.captcha_text
         from slik_checker.orchestrator import orchestrator
 
         result = orchestrator.check_status(

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from bs4 import BeautifulSoup
 
@@ -29,14 +29,15 @@ SESSION_REGEX = re.compile(
 class ParseResult:
     success: bool
     status: str = "UNKNOWN"
-    nomor_pendaftaran: Optional[str] = None
+    nomor_pendaftaran: str | None = None
     message: str = ""
-    extra: Optional[dict[str, Any]] = None
+    extra: dict[str, Any] | None = None
 
 
 class Parser:
     def parse_pre_register(self, html: str) -> ParseResult:
-        text_lower = BeautifulSoup(html, "html.parser").get_text().lower()
+        full_text = BeautifulSoup(html, "html.parser").get_text()
+        text_lower = full_text.lower()
 
         if self._detect_kuota(html):
             sessions = SESSION_REGEX.findall(html)
@@ -47,11 +48,10 @@ class Parser:
                 extra={"sessions": [{"session": s, "time": t} for s, t in sessions]},
             )
 
-        swal_msg = self._extract_sweetalert(html)
-        if swal_msg:
-            return ParseResult(success=False, status="ERROR", message=swal_msg)
-
-        nomor = self._extract_nomor_pendaftaran(BeautifulSoup(html, "html.parser").get_text())
+        # A nomor pendaftaran is issued ONLY on a successful registration. Detect
+        # it before any SweetAlert check so a number shown inside a popup (e.g. a
+        # type:'info'/'success' swal) is never misclassified as an error.
+        nomor = self._extract_nomor_pendaftaran(full_text)
         if nomor:
             return ParseResult(
                 success=True,
@@ -59,6 +59,10 @@ class Parser:
                 nomor_pendaftaran=nomor,
                 message=f"Pendaftaran berhasil: {nomor}",
             )
+
+        swal_msg = self._extract_sweetalert(html)
+        if swal_msg:
+            return ParseResult(success=False, status="ERROR", message=swal_msg)
 
         if self._has_success(text_lower):
             return ParseResult(
@@ -105,11 +109,11 @@ class Parser:
     def _format_kuota(sessions: list) -> str:
         if not sessions:
             return "Kuota layanan iDebKu OJK sudah penuh."
-        lines = [f"Sesi {n}: Pukul {t} WIB" for n, t in sessions]
+        lines = [f"Sesi {n}: Pukul {t} WIB" for n, t in dict.fromkeys(sessions)]
         return "Kuota layanan iDebKu OJK sudah penuh.\n" + "\n".join(lines)
 
     @staticmethod
-    def _extract_sweetalert(html: str) -> Optional[str]:
+    def _extract_sweetalert(html: str) -> str | None:
         matches = re.findall(r"swal\s*\(\s*\{[^}]*?\}", html, re.DOTALL)
         for m in matches:
             msg_type = re.search(r"type\s*:\s*'(\w+)'", m)
@@ -127,13 +131,14 @@ class Parser:
             if parts:
                 return "; ".join(parts)
         return None
-
     @staticmethod
-    def _extract_nomor_pendaftaran(text: str) -> Optional[str]:
-        m = re.search(r"nomor\s+pendaftaran[:\s]*(\S+)", text, re.IGNORECASE)
+    def _extract_nomor_pendaftaran(text: str) -> str | None:
+        # Capture only valid code characters so trailing punctuation/HTML/quotes
+        # (e.g. a number inside a swal string like "...REG-XYZ'})") is excluded.
+        m = re.search(r"nomor\s+pendaftaran[:\s]*([A-Za-z0-9\-]+)", text, re.IGNORECASE)
         if m:
             return m.group(1)
-        m = re.search(r"no\.?\s*pendaftaran[:\s]*(\S+)", text, re.IGNORECASE)
+        m = re.search(r"no\.?\s*pendaftaran[:\s]*([A-Za-z0-9\-]+)", text, re.IGNORECASE)
         return m.group(1) if m else None
 
     @staticmethod

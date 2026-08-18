@@ -2,12 +2,10 @@
 
 import os
 import re
-import time
-from datetime import datetime, timedelta
 from pathlib import Path
 
-import streamlit as st
 import pandas as pd
+import streamlit as st
 
 from slik_checker.models import db
 
@@ -16,7 +14,7 @@ def _read_log_file(filepath: Path, max_lines: int = 200) -> list[str]:
     """Read last N lines from a log file efficiently."""
     if not filepath.exists():
         return []
-    with open(filepath, "r") as f:
+    with open(filepath) as f:
         # Seek near end for large files
         try:
             f.seek(0, os.SEEK_END)
@@ -201,7 +199,6 @@ def show() -> None:
         st.caption(f"{sample_count} sampel captcha terkumpul — cocok untuk analisis akurasi OCR")
 
         if sample_count > 0:
-            meta_files = sorted(captcha_dir.glob("*.meta.txt"))
 
             # Show some stats
             col_a, col_b, col_c = st.columns(3)
@@ -218,7 +215,7 @@ def show() -> None:
                             with open(meta_path) as mf:
                                 meta_content = mf.read().strip()
                             # Show only final line
-                            final_line = [l for l in meta_content.split("\n") if l.startswith("final")]
+                            final_line = [line for line in meta_content.split("\n") if line.startswith("final")]
                             if final_line:
                                 st.caption(f"OCR: {final_line[0].split(': ')[-1]}")
     else:

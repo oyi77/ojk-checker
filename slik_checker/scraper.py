@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Tuple
-from urllib.parse import quote, urljoin
+import time
+from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
@@ -71,15 +71,21 @@ class Scraper:
         self._primed = False
 
     def prime_session(self, jd_id: int = 1, kw_id: int = 1) -> None:
-        """Simulate browser AJAX calls that prime the ASP.NET session."""
+        """Best-effort warm-up of the ASP.NET session via the portal's AJAX
+        cascades. Failures are non-fatal: the subsequent form-page load still
+        establishes the session, so a slow/blocked AJAX must not abort a run.
+        """
         base = str(settings.ideb_base_url)
-        self.session.get(urljoin(base, AJAX_ENDPOINTS["jenis_debitur"]))
-        self.session.get(
-            urljoin(base, AJAX_ENDPOINTS["kewarganegaraan"]), params={"JDebitur": jd_id}
-        )
-        self.session.get(
-            urljoin(base, AJAX_ENDPOINTS["identitas"]), params={"JDebitur": jd_id, "Warga": kw_id}
-        )
+        calls = [
+            urljoin(base, AJAX_ENDPOINTS["jenis_debitur"]),
+            urljoin(base, AJAX_ENDPOINTS["kewarganegaraan"]) + f"?JDebitur={jd_id}",
+            urljoin(base, AJAX_ENDPOINTS["identitas"]) + f"?JDebitur={jd_id}&Warga={kw_id}",
+        ]
+        for url in calls:
+            try:
+                self.session.get(url, timeout=settings.request_timeout)
+            except Exception as e:  # noqa: BLE001 - best-effort priming
+                logger.debug(f"prime_session_call_failed: {url} | {e}")
         self._primed = True
         logger.debug("scraper_session_primed")
 
@@ -87,7 +93,7 @@ class Scraper:
         stop=stop_after_attempt(settings.max_retries),
         wait=wait_exponential(multiplier=settings.retry_backoff),
     )
-    def fetch_page(self, url: str) -> Tuple[str, BeautifulSoup]:
+    def fetch_page(self, url: str) -> tuple[str, BeautifulSoup]:
         resp = self.session.get(url, timeout=settings.request_timeout)
         resp.raise_for_status()
         return resp.text, BeautifulSoup(resp.text, "html.parser")
@@ -108,7 +114,7 @@ class Scraper:
         stop=stop_after_attempt(settings.max_retries),
         wait=wait_exponential(multiplier=settings.retry_backoff),
     )
-    def post_form(self, url: str, data: dict) -> Tuple[int, BeautifulSoup]:
+    def post_form(self, url: str, data: dict) -> tuple[int, BeautifulSoup]:
         self.session.headers.update(
             {
                 "Origin": str(settings.ideb_base_url),
@@ -125,7 +131,11 @@ class Scraper:
     def extract_hidden_inputs(
         soup: BeautifulSoup, form_id: str = "FormPreRegister"
     ) -> dict[str, str]:
-        form = soup.find("form", id=form_id)
+        # Status page has no form id; fall back to the first <form> so the
+        # anti-forgery token is still captured.
+        form = soup.find("form", id=form_id) if form_id else None
+        if not form:
+            form = soup.find("form")
         if not form:
             hidden = {}
             for m in re.finditer(r'<input[^>]*type="hidden"[^>]*>', str(soup)):
@@ -141,16 +151,26 @@ class Scraper:
         }
 
     @staticmethod
-    def extract_server_timestamp(html: str) -> Tuple[int, int, int, int, int, int]:
+    def extract_server_timestamp(html: str) -> tuple[int, int, int, int, int, int]:
         match = re.search(r"new Date\('(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})'\)", html)
         if match:
             return tuple(int(g) for g in match.groups())  # type: ignore[return-value]
-        raise RuntimeError("Server timestamp not found in HTML")
+        # Step-2+ pages may omit the literal; fall back to current local time so
+        # postm never crashes the wizard (server accepts recent timestamps).
+        now = time.localtime()
+        return (now.tm_year, now.tm_mon, now.tm_mday, now.tm_hour, now.tm_min, now.tm_sec)
 
     @staticmethod
-    def build_postm(html: str) -> str:
-        y, mo, d, h, mi, s = Scraper.extract_server_timestamp(html)
-        return _base64encode(f"{y:04d}-{mo:02d}-{d:02d}-{h:02d}-{mi:02d}-{s:02d}")
+    def build_postm(
+        html: str, server_ts: tuple[int, int, int, int, int, int] | None = None
+    ) -> str:
+        if server_ts is None:
+            server_ts = Scraper.extract_server_timestamp(html)
+        y, mo, d, h, mi, s = server_ts
+        # Mirror the portal's cmdEncrypt() exactly: YYYY-M-D-HH-MM-SS
+        # (month/day UNpadded, h/m/s zero-padded) — the server decodes and
+        # validates this anti-replay timestamp, so the format must match.
+        return _base64encode(f"{y}-{mo}-{d}-{h:02d}-{mi:02d}-{s:02d}")
 
     def detect_kuota(self, html: str) -> bool:
         return bool(re.search(r"melebihi\s+kuota", html, re.IGNORECASE | re.DOTALL))
@@ -158,6 +178,24 @@ class Scraper:
     def reset(self) -> None:
         self.session.cookies.clear()
         self._primed = False
+
+    def save_session(self, path: str) -> None:
+        """Persist session cookies so a captcha fetched in one process can be
+        submitted in another. The portal stores the expected captcha value
+        server-side per session, so the submit must reuse the same session.
+        """
+        import json
+
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(requests.utils.dict_from_cookiejar(self.session.cookies), f)
+
+    def load_session(self, path: str) -> None:
+        """Restore persisted session cookies (see save_session)."""
+        import json
+
+        with open(path, encoding="utf-8") as f:
+            self.session.cookies = requests.utils.cookiejar_from_dict(json.load(f))
+        self._primed = True
 
 
 scraper = Scraper()

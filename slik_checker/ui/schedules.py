@@ -4,7 +4,6 @@ import streamlit as st
 
 from slik_checker.models import db
 from slik_checker.orchestrator import orchestrator
-from slik_checker.scheduler import SchedulerDaemon
 
 CRON_PRESETS = {
     "Setiap 6 jam": "0 */6 * * *",

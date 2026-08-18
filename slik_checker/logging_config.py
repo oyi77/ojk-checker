@@ -2,14 +2,13 @@
 
 import logging
 import sys
-from typing import Optional
 
 _logger = logging.getLogger("slik_checker")
 
 
 def setup_logging(
-    level: Optional[str] = None,
-    output_format: Optional[str] = None,
+    level: str | None = None,
+    output_format: str | None = None,
 ) -> None:
     fmt = output_format or "console"
     log_level = getattr(logging, (level or "INFO").upper(), logging.INFO)

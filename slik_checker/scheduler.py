@@ -5,7 +5,6 @@ from __future__ import annotations
 import signal
 import sys
 import time
-from datetime import datetime, timezone
 from typing import Any
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -130,6 +129,10 @@ class SchedulerDaemon:
 
         db.update_schedule_last_run(schedule_id)
 
+        if sched.get("action", "check") == "register":
+            self._execute_registration(sched)
+            return
+
         try:
             result = self._orchestrator.check_status(
                 debitur_id=sched["debitur_id"],
@@ -146,6 +149,59 @@ class SchedulerDaemon:
             errors = db.increment_schedule_errors(schedule_id)
             if errors >= sched["max_errors"]:
                 db.toggle_schedule(schedule_id, False)
+
+    def _execute_registration(self, sched: dict[str, Any]) -> None:
+        """Submit a pre-registration for the schedule's debitur.
+
+        Unlike status-checking, registration has no prior debitur_id lookup
+        need — the identity lives on the debitur row and the orchestrator
+        (re)creates it per attempt. The schedule disables itself on success
+        so it won't re-submit the same person.
+        """
+        debitur_id = sched["debitur_id"]
+        deb = db.get_debitur(debitur_id)
+        if not deb:
+            logger.error(
+                f"schedule_register_no_debitur: id={sched['id']} | debitur_id={debitur_id}"
+            )
+            db.toggle_schedule(sched["id"], False)
+            return
+
+        try:
+            result = self._orchestrator.submit_registration(
+                nama=deb["nama"],
+                nik=deb["nik"],
+                tempat_lahir=deb.get("tempat_lahir", ""),
+                tanggal_lahir=deb.get("tanggal_lahir", ""),
+                kewarganegaraan=deb.get("kewarganegaraan", "WNI"),
+                jenis_identitas=deb.get("jenis_identitas", "KTP"),
+                email=deb.get("email", ""),
+                nomor_hp=deb.get("nomor_hp", ""),
+                jenis_debitur=deb.get("jenis_debitur", "Perseorangan"),
+            )
+        except Exception as e:
+            logger.error(f"schedule_register_error: id={sched['id']} | error={e}")
+            db.add_log(str(e), "ERROR", debitur_id=debitur_id, schedule_id=sched["id"])
+            self._count_error(sched)
+            return
+
+        status = result.get("status")
+        success = result.get("success")
+        logger.info(
+            f"schedule_register_done: id={sched['id']} | status={status} | success={success}"
+        )
+        if success:
+            # Registration accepted — stop retrying.
+            db.toggle_schedule(sched["id"], False)
+            logger.info(f"schedule_register_disabled_after_success: id={sched['id']}")
+        elif status == "ERROR":
+            self._count_error(sched)
+        # QUOTA_FULL / inconclusive: leave enabled so it retries next window.
+
+    def _count_error(self, sched: dict[str, Any]) -> None:
+        errors = db.increment_schedule_errors(sched["id"])
+        if errors >= sched["max_errors"]:
+            db.toggle_schedule(sched["id"], False)
 
     def _handle_shutdown(self, signum: int, frame: Any) -> None:
         logger.info(f"scheduler_shutdown_signal: signal={signum}")

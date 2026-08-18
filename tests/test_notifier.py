@@ -1,7 +1,6 @@
 """Tests for notifier module."""
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from slik_checker.notifier import Notifier
 

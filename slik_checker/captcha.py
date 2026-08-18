@@ -3,23 +3,27 @@
 from __future__ import annotations
 
 import io
-import os
+import re
 import time
 import warnings
 from collections import Counter
+from collections.abc import Callable
 from datetime import datetime
-from typing import Callable, Optional
 from pathlib import Path
 
-# Suppress MPS pin_memory warning on Apple Silicon
-warnings.filterwarnings("ignore", message="'pin_memory' argument is set as true but not supported on MPS now, device pinned memory won't be used.")
-
 import numpy as np
+import requests
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 from slik_checker.config import settings
 from slik_checker.exceptions import CaptchaSolverError
 from slik_checker.logging_config import get_logger
+
+# Suppress MPS pin_memory warning on Apple Silicon
+warnings.filterwarnings(
+    "ignore",
+    message="'pin_memory' argument is set as true but not supported on MPS now, device pinned memory won't be used.",
+)
 
 logger = get_logger(__name__)
 
@@ -164,7 +168,7 @@ class CaptchaPreprocessor:
         try:
             import pytesseract
             osd = pytesseract.image_to_osd(img, config="--psm 0 -c min_characters_to_try=5")
-            angle = float([l for l in osd.split("\n") if "Orientation in degrees:" in l][0].split(":")[1].strip())
+            angle = float([line for line in osd.split("\n") if "Orientation in degrees:" in line][0].split(":")[1].strip())
             if angle != 0:
                 return img.rotate(-angle, expand=True, fillcolor="white")
         except Exception:
@@ -229,7 +233,7 @@ class CaptchaDataCollector:
         self._save_dir = CAPTCHA_SAVE_DIR
         self._save_dir.mkdir(parents=True, exist_ok=True)
 
-    def save_sample(self, data: bytes, engine_results: dict[str, Optional[str]], final_text: Optional[str]) -> str:
+    def save_sample(self, data: bytes, engine_results: dict[str, str | None], final_text: str | None) -> str:
         """Save a captcha sample with metadata for analysis."""
         ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         fname = f"captcha_{ts}.png"
@@ -272,7 +276,7 @@ class CaptchaSolver:
         self._easyocr_reader: object | None = None
         self._preprocessor = CaptchaPreprocessor()
         self._collector = CaptchaDataCollector()
-        self._init_engines()
+        self._engines_ready = False
 
     def _init_engines(self) -> None:
         try:
@@ -280,34 +284,62 @@ class CaptchaSolver:
             pytesseract.get_tesseract_version()
             self._engines["tesseract"] = self._solve_tesseract
             logger.info(f"captcha_engine_loaded: engine={'tesseract'}")
-        except Exception as e:
+        except Exception:
             logger.warning(f"captcha_engine_unavailable: engine={'tesseract'}")
 
         try:
-            import ddddocr
-            self._ddddocr = ddddocr.DdddOcr(show_ad=False, old=True)
+            import ddddocr  # noqa: F401  (heavy model constructed lazily)
             self._engines["ddddocr"] = self._solve_ddddocr
-            logger.info(f"captcha_engine_loaded: engine={'ddddocr'}")
-        except Exception as e:
+            logger.info(f"captcha_engine_registered: engine={'ddddocr'}")
+        except Exception:
             logger.warning(f"captcha_engine_unavailable: engine={'ddddocr'}")
 
         try:
+            import easyocr  # noqa: F401  (heavy model constructed lazily)
+            self._engines["easyocr"] = self._solve_easyocr
+            logger.info(f"captcha_engine_registered: engine={'easyocr'}")
+        except Exception:
+            logger.warning(f"captcha_engine_unavailable: engine={'easyocr'}")
+    def _ensure_engines(self) -> None:
+        if self._engines_ready:
+            return
+        self._init_engines()
+        self._engines_ready = True
+
+    def _ensure_ddddocr(self):
+        if self._ddddocr is None:
+            import ddddocr
+            self._ddddocr = ddddocr.DdddOcr(show_ad=False, old=True)
+        return self._ddddocr
+
+    def _ensure_easyocr(self):
+        if self._easyocr_reader is None:
             import easyocr
             self._easyocr_reader = easyocr.Reader(["en"], gpu=False, verbose=False)
-            self._engines["easyocr"] = self._solve_easyocr
-            logger.info(f"captcha_engine_loaded: engine={'easyocr'}")
-        except Exception as e:
-            logger.warning(f"captcha_engine_unavailable: engine={'easyocr'}")
+        return self._easyocr_reader
+
 
     @property
     def available(self) -> bool:
-        return len(self._engines) > 0
+        self._ensure_engines()
+        if len(self._engines) > 0:
+            return True
+        # Non-local solvers (vision LLM, external API, manual input, or a
+        # pre-supplied override) do not require local OCR engines to be loaded.
+        if settings.captcha_override:
+            return True
+        if settings.captcha_mode in ("manual", "vision"):
+            return True
+        if settings.vision_captcha_enabled and settings.vision_captcha_api_key:
+            return True
+        return bool(settings.external_captcha_api_key)
 
     @property
     def engine_count(self) -> int:
+        self._ensure_engines()
         return len(self._engines)
 
-    def _solve_tesseract(self, img: Image.Image) -> Optional[str]:
+    def _solve_tesseract(self, img: Image.Image) -> str | None:
         import pytesseract
 
         # Try multiple preprocessing strategies
@@ -339,7 +371,7 @@ class CaptchaSolver:
 
         return best_result
 
-    def _solve_ddddocr(self, img: Image.Image) -> Optional[str]:
+    def _solve_ddddocr(self, img: Image.Image) -> str | None:
         buf = io.BytesIO()
         # Try multiple scales
         results = []
@@ -349,7 +381,7 @@ class CaptchaSolver:
                 buf.seek(0)
                 buf.truncate(0)
                 scaled.save(buf, format="PNG")
-                text = self._ddddocr.classification(buf.getvalue())  # type: ignore[union-attr]
+                text = self._ensure_ddddocr().classification(buf.getvalue())  # type: ignore[union-attr]
                 text = text.replace(" ", "").replace("\n", "")
                 validated = self._validate(text)
                 if validated:
@@ -364,8 +396,7 @@ class CaptchaSolver:
         cnt = Counter(results)
         return cnt.most_common(1)[0][0]
 
-    def _solve_easyocr(self, img: Image.Image) -> Optional[str]:
-        import easyocr
+    def _solve_easyocr(self, img: Image.Image) -> str | None:
         results = []
 
         # Try multiple preprocessing strategies for easyocr
@@ -373,7 +404,7 @@ class CaptchaSolver:
         for name, processed in pipelines:
             try:
                 arr = np.array(processed)
-                texts = self._easyocr_reader.readtext(  # type: ignore[union-attr]
+                texts = self._ensure_easyocr().readtext(  # type: ignore[union-attr]
                     arr,
                     detail=0,
                     paragraph=True,
@@ -393,7 +424,7 @@ class CaptchaSolver:
         cnt = Counter(results)
         return cnt.most_common(1)[0][0]
 
-    def _validate(self, text: str) -> Optional[str]:
+    def _validate(self, text: str) -> str | None:
         if not text:
             return None
         # Filter to only allowed characters
@@ -407,65 +438,161 @@ class CaptchaSolver:
             return filtered[:mx] if mn <= mx else None
         return None
 
-    def solve(self, img: Image.Image) -> Optional[str]:
-        if not self._engines:
-            raise CaptchaSolverError("No captcha engines available")
+    def _vote_all(self, img: Image.Image) -> tuple[str | None, dict[str, str | None]]:
+        """Run every available OCR engine and vote; returns (winner, per-engine results).
 
-        results: list[str] = []
-        engine_results: dict[str, Optional[str]] = {}
-
+        All engines (incl. the heavier easyocr) participate so that when ddddocr
+        and easyocr disagree, the disagreement is surfaced and the most common
+        reading wins. The orchestrator additionally tries each distinct candidate
+        against the live portal, which is the authoritative validator.
+        """
+        engine_results: dict[str, str | None] = {}
+        votes: list[str] = []
         for name, fn in self._engines.items():
             try:
                 r = fn(img)
                 engine_results[name] = r
                 if r:
-                    results.append(r)
-                    logger.debug(f"captcha_engine_result: engine={name} | result={r}")
-            except Exception as e:
+                    votes.append(r)
+            except Exception:
                 logger.warning(f"captcha_engine_error: engine={name}")
                 engine_results[name] = None
+        if votes:
+            return Counter(votes).most_common(1)[0][0], engine_results
+        return None, engine_results
 
-        if not results:
-            return None
-
-        counts = Counter(results)
-        winner, count = counts.most_common(1)[0]
-
-        if count >= 2:
-            logger.info(f"captcha_consensus: result={winner}")
-            return winner
-
-        logger.info(f"captcha_no_consensus: result={winner}")
+    def solve(self, img: Image.Image) -> str | None:
+        self._ensure_engines()
+        if not self._engines:
+            raise CaptchaSolverError("No captcha engines available")
+        winner, _ = self._vote_all(img)
         return winner
 
-    def solve_from_bytes(self, data: bytes) -> Optional[str]:
+    def solve_from_bytes(self, data: bytes) -> str | None:
         img = Image.open(io.BytesIO(data))
-
-        # Run OCR
-        result = self.solve(img)
-
-        # Collect sample data for training
-        engine_results: dict[str, Optional[str]] = {}
-        for name, fn in self._engines.items():
-            try:
-                r = fn(img.copy())
-                engine_results[name] = r
-            except Exception:
-                engine_results[name] = None
-
-        # Save sample async (fire-and-forget)
+        self._ensure_engines()
+        winner, engine_results = self._vote_all(img)
         try:
-            self._collector.save_sample(data, engine_results, result)
+            self._collector.save_sample(data, engine_results, winner)
         except Exception as e:
             logger.debug(f"captcha_save_failed: {e}")
+        return winner
 
-        return result
-
-    def solve_from_path(self, path: str) -> Optional[str]:
+    def solve_from_path(self, path: str) -> str | None:
         img = Image.open(path)
         return self.solve(img)
 
-    def solve_external(self, img: Image.Image) -> Optional[str]:
+    def solve_vision(self, img: Image.Image) -> str | None:
+        """Solve a captcha image via an OpenAI-compatible vision-LLM.
+
+        FREE with a free-tier API key (Gemini 2.5 Flash free tier, GLM-4.6v free
+        quota) or a local Ollama vision model (http://localhost:11434/v1, no key).
+        Uses the OpenAI-compatible /chat/completions vision API, so it works with
+        Gemini (OpenAI-compatible base URL), GLM (OpenAI-compatible base URL), or
+        Ollama. Pattern from epic-freebies-helper (multimodal captcha reading).
+        Returns the transcribed text, or None on any error / if not configured.
+        """
+        if not settings.vision_captcha_enabled:
+            return None
+        try:
+            import base64
+
+
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            b64 = base64.b64encode(buf.getvalue()).decode()
+            base = str(settings.vision_captcha_api_base).rstrip("/")
+            model = settings.vision_captcha_model
+            prompt = settings.vision_captcha_prompt
+            api_key = settings.vision_captcha_api_key
+            api_key_val = api_key.get_secret_value() if api_key else ""
+
+            # Native Gemini (…/models/<m>:generateContent) uses the X-goog-api-key
+            # header and a different request/response shape than the OpenAI-compatible
+            # /chat/completions path (used by GLM, Ollama, and Gemini's OpenAI endpoint).
+            is_native = ":generateContent" in base
+
+            if is_native:
+                url = base
+                headers = {"Content-Type": "application/json"}
+                if api_key_val:
+                    headers["X-goog-api-key"] = api_key_val
+                payload = {
+                    "contents": [
+                        {
+                            "parts": [
+                                {"text": prompt},
+                                {"inline_data": {"mime_type": "image/png", "data": b64}},
+                            ]
+                        }
+                    ],
+                    "generationConfig": {"maxOutputTokens": 32},
+                    # Captcha images can trip Gemini's default safety filters; disable
+                    # blocking so the model returns the transcription instead of an
+                    # empty/blocked candidate (which would surface as a missing 'parts').
+                    "safetySettings": [
+                        {"category": c, "threshold": "BLOCK_NONE"}
+                        for c in (
+                            "HARM_CATEGORY_HARASSMENT",
+                            "HARM_CATEGORY_HATE_SPEECH",
+                            "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                            "HARM_CATEGORY_DANGEROUS_CONTENT",
+                            "HARM_CATEGORY_CIVIC_INTEGRITY",
+                        )
+                    ],
+                }
+            else:
+                url = f"{base}/chat/completions"
+                headers = {"Content-Type": "application/json"}
+                if api_key_val:
+                    headers["Authorization"] = f"Bearer {api_key_val}"
+                payload = {
+                    "model": model,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": prompt},
+                                {
+                                    "type": "image_url",
+                                    "image_url": {"url": f"data:image/png;base64,{b64}"},
+                                },
+                            ],
+                        }
+                    ],
+                    "max_tokens": 32,
+                }
+            last_err: Exception | None = None
+            for _attempt in range(3):
+                try:
+                    resp = requests.post(url, headers=headers, json=payload, timeout=60)
+                    if resp.status_code == 429:
+                        logger.warning("vision_captcha_429: rate limited, backing off 60s")
+                        time.sleep(60)
+                        continue
+                    resp.raise_for_status()
+                    data = resp.json()
+                    if is_native:
+                        raw = data["candidates"][0]["content"]["parts"][0]["text"] or ""
+                    else:
+                        raw = data["choices"][0]["message"]["content"] or ""
+                    text = re.sub(r"[^A-Za-z0-9]", "", raw)
+                    if settings.captcha_min_length <= len(text) <= settings.captcha_max_length:
+                        logger.info(f"vision_captcha_solved: result={text}")
+                        return text
+                    logger.warning(f"vision_captcha_bad: raw={raw!r} cleaned={text!r}")
+                    return None
+                except Exception as e:  # noqa: BLE001
+                    last_err = e
+                    logger.warning(f"vision_captcha_error: {e}")
+                    break
+            if last_err:
+                logger.warning(f"vision_captcha_failed_after_retries: {last_err}")
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"vision_captcha_error: {e}")
+        return None
+
+    def solve_external(self, img: Image.Image) -> str | None:
         """Fallback to external captcha solving service (e.g., 2Captcha)."""
         api_key = settings.external_captcha_api_key
         if not api_key:
@@ -473,8 +600,8 @@ class CaptchaSolver:
             return None
 
         import base64
-        import requests
         import time
+
 
         buf = io.BytesIO()
         img.save(buf, format="PNG")

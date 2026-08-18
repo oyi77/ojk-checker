@@ -1,7 +1,8 @@
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 from bs4 import BeautifulSoup
-from slik_checker.scraper import Scraper, scraper, _base64encode
+
+from slik_checker.scraper import Scraper, _base64encode
 
 
 class TestScraper:
@@ -45,7 +46,8 @@ class TestScraper:
         postm = s.build_postm(html)
         import base64
 
-        assert base64.b64decode(postm).decode() == "2026-05-07-08-00-00"
+        # Mirrors the portal's cmdEncrypt(): YYYY-M-D-HH-MM-SS (month/day unpadded).
+        assert base64.b64decode(postm).decode() == "2026-5-7-08-00-00"
 
     def test_detect_kuota_false(self):
         s = Scraper()
@@ -62,3 +64,12 @@ class TestScraper:
         s = Scraper()
         s.prime_session(1, 1)
         assert mock_get.call_count == 3
+
+    def test_save_load_session_roundtrip(self, tmp_path):
+        s = Scraper()
+        s.session.cookies.set("ASP.NET_SessionId", "abc123", domain="idebku.ojk.go.id")
+        path = tmp_path / "sess.json"
+        s.save_session(str(path))
+        s2 = Scraper()
+        s2.load_session(str(path))
+        assert s2.session.cookies.get("ASP.NET_SessionId") == "abc123"

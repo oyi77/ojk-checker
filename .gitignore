@@ -10,7 +10,11 @@ build/
 data/*.db
 data/*.png
 data/ktp/
+data/*.html
+data/*.json
+data/captcha_samples/
+.coverage
 *.log
+*.pid
+*.out
 .DS_Store
-.idea/
-.vscode/
