@@ -276,18 +276,16 @@ class Orchestrator:
         """
         html, soup = scraper.fetch_page(str(settings.pre_register_url))
 
-        # Quota handling with exponential backoff (re-fetch before each retry).
-        max_quota_retries = 3
-        quota_delay = 60
+        # Fast quota retry during registration attempts (re-fetch with short delay)
+        max_quota_retries = settings.quota_max_retries
+        quota_delay = settings.quota_retry_delay
         for attempt in range(max_quota_retries):
             if not scraper.detect_kuota(html):
                 break
-            logger.debug(f"quota_full: attempt={attempt + 1}")
+            logger.debug(f"quota_full_fast_retry: attempt={attempt + 1}/{max_quota_retries}")
             if attempt < max_quota_retries - 1:
                 time.sleep(quota_delay)
-                quota_delay *= 2
                 html, soup = scraper.fetch_page(str(settings.pre_register_url))
-
         if scraper.detect_kuota(html):
             r = parser.parse_pre_register(html)
             return {

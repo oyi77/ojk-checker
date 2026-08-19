@@ -35,7 +35,11 @@ class SchedulerDaemon:
             return
 
         db.initialize()
-
+        try:
+            from slik_checker.captcha import captcha_solver
+            captcha_solver._init_engines()
+        except Exception:
+            pass
         signal.signal(signal.SIGINT, self._handle_shutdown)
         signal.signal(signal.SIGTERM, self._handle_shutdown)
 

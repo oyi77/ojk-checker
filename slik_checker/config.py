@@ -38,7 +38,8 @@ class Settings(BaseSettings):
     request_timeout: int = 30
     max_retries: int = 3
     retry_backoff: float = 1.5
-
+    quota_retry_delay: float = 2.0
+    quota_max_retries: int = 5
     # --- Captcha ---
     # captcha_mode: "auto"   -> vision-LLM solver (if enabled), else external service
     #                           (if key set), else local OCR
