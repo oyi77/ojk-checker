@@ -513,7 +513,6 @@ class CaptchaSolver:
             is_native = ":generateContent" in base
 
             if is_native:
-                url = base
                 headers = {"Content-Type": "application/json"}
                 if api_key_val:
                     headers["X-goog-api-key"] = api_key_val
@@ -526,10 +525,7 @@ class CaptchaSolver:
                             ]
                         }
                     ],
-                    "generationConfig": {"maxOutputTokens": 32},
-                    # Captcha images can trip Gemini's default safety filters; disable
-                    # blocking so the model returns the transcription instead of an
-                    # empty/blocked candidate (which would surface as a missing 'parts').
+                    "generationConfig": {"maxOutputTokens": 32, "temperature": 0.1},
                     "safetySettings": [
                         {"category": c, "threshold": "BLOCK_NONE"}
                         for c in (
@@ -541,6 +537,35 @@ class CaptchaSolver:
                         )
                     ],
                 }
+                models_to_try = [
+                    model,
+                    "gemini-flash-lite-latest",
+                    "gemini-3.5-flash-lite",
+                    "gemini-3.6-flash",
+                    "gemini-flash-latest",
+                ]
+                # Deduplicate while preserving order
+                seen = set()
+                models_to_try = [m for m in models_to_try if not (m in seen or seen.add(m))]
+                for m in models_to_try:
+                    target_url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent"
+                    try:
+                        resp = requests.post(target_url, headers=headers, json=payload, timeout=20)
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            candidates = data.get("candidates", [])
+                            if candidates:
+                                parts = candidates[0].get("content", {}).get("parts", [])
+                                if parts:
+                                    raw = parts[0].get("text", "") or ""
+                                    text = re.sub(r"[^A-Za-z0-9]", "", raw)
+                                    if settings.captcha_min_length <= len(text) <= settings.captcha_max_length:
+                                        logger.info(f"vision_captcha_solved: model={m} | result={text}")
+                                        return text
+                        logger.warning(f"vision_captcha_model_unsuccessful: model={m} | status={resp.status_code}")
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(f"vision_captcha_model_err: model={m} | {e}")
+                        continue
             else:
                 url = f"{base}/chat/completions"
                 headers = {"Content-Type": "application/json"}
@@ -562,32 +587,25 @@ class CaptchaSolver:
                     ],
                     "max_tokens": 32,
                 }
-            last_err: Exception | None = None
-            for _attempt in range(3):
-                try:
-                    resp = requests.post(url, headers=headers, json=payload, timeout=60)
-                    if resp.status_code == 429:
-                        logger.warning("vision_captcha_429: rate limited, backing off 60s")
-                        time.sleep(60)
-                        continue
-                    resp.raise_for_status()
-                    data = resp.json()
-                    if is_native:
-                        raw = data["candidates"][0]["content"]["parts"][0]["text"] or ""
-                    else:
+                for _attempt in range(3):
+                    try:
+                        resp = requests.post(url, headers=headers, json=payload, timeout=60)
+                        if resp.status_code == 429:
+                            logger.warning("vision_captcha_429: rate limited, backing off 60s")
+                            time.sleep(60)
+                            continue
+                        resp.raise_for_status()
+                        data = resp.json()
                         raw = data["choices"][0]["message"]["content"] or ""
-                    text = re.sub(r"[^A-Za-z0-9]", "", raw)
-                    if settings.captcha_min_length <= len(text) <= settings.captcha_max_length:
-                        logger.info(f"vision_captcha_solved: result={text}")
-                        return text
-                    logger.warning(f"vision_captcha_bad: raw={raw!r} cleaned={text!r}")
-                    return None
-                except Exception as e:  # noqa: BLE001
-                    last_err = e
-                    logger.warning(f"vision_captcha_error: {e}")
-                    break
-            if last_err:
-                logger.warning(f"vision_captcha_failed_after_retries: {last_err}")
+                        text = re.sub(r"[^A-Za-z0-9]", "", raw)
+                        if settings.captcha_min_length <= len(text) <= settings.captcha_max_length:
+                            logger.info(f"vision_captcha_solved: result={text}")
+                            return text
+                        logger.warning(f"vision_captcha_bad: raw={raw!r} cleaned={text!r}")
+                        return None
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(f"vision_captcha_error: {e}")
+                        break
         except Exception as e:  # noqa: BLE001
             logger.warning(f"vision_captcha_error: {e}")
         return None

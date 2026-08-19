@@ -99,6 +99,8 @@ class Orchestrator:
             "IDENTITAS_ID": str(reg.ident_id),
             "TDAFTAR_IDENTITAS_NO": reg.nik,
             "CaptchaWsCode": captcha_text,
+            "Idebku_CaptchaInputText": captcha_text,
+            "ReCaptchaToken": "tidakdigunakan",
         }
         # DevExpress renders these controls client-side, so they are ABSENT from the
         # static HTML we scrape. Merge them unconditionally — the portal expects them
