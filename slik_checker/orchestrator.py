@@ -444,11 +444,14 @@ class Orchestrator:
                     "nomor_pendaftaran": None,
                 }
             else:
-                if attempt["status"] in ("QUOTA_FULL", "NEXT_STEP", "SUBMITTED", "REGISTERED"):
+                if attempt["status"] in ("NEXT_STEP", "SUBMITTED", "REGISTERED"):
                     break
+                if attempt["status"] == "QUOTA_FULL":
+                    logger.info(f"attempt_quota_full: round={round_idx + 1}/{max_rounds} | retrying in 1s")
+                    time.sleep(1)
+                    continue
                 logger.warning(f"attempt_inconclusive: round={round_idx + 1} | {attempt['status']}")
                 time.sleep(1)
-
         status = attempt["status"]
         is_success = status in ("NEXT_STEP", "SUBMITTED", "REGISTERED")
         nomor = attempt.get("nomor_pendaftaran")

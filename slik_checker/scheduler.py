@@ -195,13 +195,15 @@ class SchedulerDaemon:
             f"schedule_register_done: id={sched['id']} | status={status} | success={success}"
         )
         if success:
-            # Registration accepted — stop retrying.
+            # Registration accepted — stop retrying and disable registration schedules for this debitur.
             db.toggle_schedule(sched["id"], False)
-            logger.info(f"schedule_register_disabled_after_success: id={sched['id']}")
-        elif status == "ERROR":
-            self._count_error(sched)
-        # QUOTA_FULL / inconclusive: leave enabled so it retries next window.
-
+            for s in db.list_active_schedules():
+                if s["debitur_id"] == debitur_id and s.get("action") == "register":
+                    db.toggle_schedule(s["id"], False)
+            logger.info(f"schedule_register_disabled_after_success: id={sched['id']} | debitur_id={debitur_id}")
+        else:
+            # Leave enabled so it retries every session window until registered
+            logger.info(f"schedule_register_attempt_complete: id={sched['id']} | status={status} (schedule remains active)")
     def _count_error(self, sched: dict[str, Any]) -> None:
         errors = db.increment_schedule_errors(sched["id"])
         if errors >= sched["max_errors"]:

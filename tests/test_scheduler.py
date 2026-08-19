@@ -140,7 +140,7 @@ def test_execute_schedule_register_error_counts(monkeypatch):
         "kewarganegaraan": "WNI", "jenis_identitas": "KTP", "email": "", "nomor_hp": "",
         "jenis_debitur": "Perseorangan",
     }
-    orch.submit_registration.return_value = {"success": False, "status": "ERROR"}
+    orch.submit_registration.side_effect = RuntimeError("network_down")
     db.increment_schedule_errors.return_value = 1
     daemon = _make_daemon(monkeypatch, db, orch)
     daemon._execute_schedule(2)
