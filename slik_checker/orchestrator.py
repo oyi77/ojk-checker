@@ -602,24 +602,15 @@ class Orchestrator:
                         "message": "Kuota penuh",
                     }
 
-                caps = scraper.fetch_captcha()
-                cap = captcha_solver.solve_from_bytes(caps)
+                cap = self._solve_captcha()
                 if not cap:
-                    # Captcha OCR failed; retry rather than submitting garbage.
                     logger.warning("status_captcha_failed: retrying")
                     continue
                 hidden = scraper.extract_hidden_inputs(soup)
                 data = dict(hidden)
-                for inp in soup.find_all("input"):
-                    fn = inp.get("name", "")
-                    if inp.get("type") in ("hidden", "submit", "button"):
-                        continue
-                    if "captcha" in fn.lower():
-                        data[fn] = cap
-                # `txt_no_pendaftaran` is a DevExpress dxTextBox whose <input> is
-                # rendered client-side, so it is absent from the static HTML.
-                # Set it explicitly — this is the RE-confirmed control name.
                 data["txt_no_pendaftaran"] = nomor
+                data["CaptchaWsCode"] = cap
+                data["ReCaptchaToken"] = "tidakdigunakan"
 
                 sc, rs = scraper.post_form(str(settings.status_url), data)
                 if sc != 200:
