@@ -1,4 +1,4 @@
-"""Unit tests for the Smart Challenge Pose Generator (slik_checker.pose_generator)."""
+"""Unit tests for the Smart Challenge Pose & Selfie Generator (slik_checker.pose_generator)."""
 
 from __future__ import annotations
 
@@ -38,7 +38,6 @@ def test_find_local_preset(tmp_path: Path):
     user_dir = tmp_path / nik
     user_dir.mkdir(parents=True)
 
-    # Create fake preset files
     p5 = user_dir / "pose_5.jpg"
     p5.write_bytes(b"fake_jpeg_data")
 
@@ -75,7 +74,7 @@ def test_resolve_pose_uses_preset_first(tmp_path: Path):
     selfie.write_bytes(b"selfie_data")
 
     pg = PoseGenerator(base_dir=tmp_path)
-    resolved = pg.resolve_pose(nik, selfie, "3A_B")
+    resolved = pg.resolve_pose(nik, selfie, None, "3A_B")
     assert resolved == p3
 
 
@@ -91,10 +90,35 @@ def test_resolve_pose_fallback_to_selfie(tmp_path: Path):
 
     # Mock AI to fail/return None -> should fallback to selfie
     with mock.patch.object(pg, "generate_ai_pose", return_value=None):
-        resolved = pg.resolve_pose(nik, selfie, "2A_B")
+        resolved = pg.resolve_pose(nik, selfie, None, "2A_B")
         assert resolved == selfie
 
 
-def test_resolve_pose_no_selfie():
+def test_resolve_selfie_from_ktp_fallback(tmp_path: Path):
+    nik = "3517181901000002"
+    ktp = tmp_path / "ktp.jpg"
+    img = Image.new("RGB", (100, 100), color="green")
+    img.save(ktp, format="JPEG")
+
+    pg = PoseGenerator(base_dir=tmp_path)
+    with mock.patch.object(pg, "generate_selfie_from_ktp", return_value=None):
+        resolved = pg.resolve_selfie(nik, None, ktp)
+        assert resolved == ktp
+
+
+def test_resolve_pose_from_ktp_only(tmp_path: Path):
+    nik = "3517181901000002"
+    ktp = tmp_path / "ktp.jpg"
+    img = Image.new("RGB", (100, 100), color="green")
+    img.save(ktp, format="JPEG")
+
+    pg = PoseGenerator(base_dir=tmp_path)
+    with mock.patch.object(pg, "generate_ai_pose", return_value=None):
+        resolved = pg.resolve_pose(nik, None, ktp, "5A_B")
+        assert resolved == ktp
+
+
+def test_resolve_pose_no_inputs():
     pg = PoseGenerator()
-    assert pg.resolve_pose("123", None, "5A_B") is None
+    assert pg.resolve_pose("123", None, None, "5A_B") is None
+    assert pg.resolve_selfie("123", None, None) is None

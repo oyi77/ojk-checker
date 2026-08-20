@@ -103,9 +103,15 @@ class Orchestrator:
         data["postm"] = scraper.build_postm(html, server_ts)
 
         challenge_code = data.get("TDAFTAR_KODE_CHALLENGE", "5A_B")
+        selfie_path = reg.foto_selfie_path
+        if not selfie_path and reg.foto_ktp_path:
+            p_selfie = pose_generator.resolve_selfie(reg.nik, reg.foto_selfie_path, reg.foto_ktp_path)
+            if p_selfie:
+                selfie_path = str(p_selfie)
+
         chal_path = reg.foto_challenge_path
-        if not chal_path and reg.foto_selfie_path:
-            p_res = pose_generator.resolve_pose(reg.nik, reg.foto_selfie_path, challenge_code)
+        if not chal_path:
+            p_res = pose_generator.resolve_pose(reg.nik, selfie_path, reg.foto_ktp_path, challenge_code)
             if p_res:
                 chal_path = str(p_res)
 
