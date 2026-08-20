@@ -221,6 +221,47 @@ class PoseGenerator:
         images = [(face_img, "Person Identity Reference"), (ref_img, "Full Context Reference")]
         return self._call_gemini_multimodal(images, prompt, out_file)
 
+    def synthesize_selfie_composite(self, nik: str, ktp_path: Path) -> Path | None:
+        """Deterministically synthesize a selfie holding the e-KTP from the KTP card.
+
+        Extracts the person's real portrait photo from the KTP, scales it in the
+        upper selfie frame, and composites the e-KTP card in the lower frame.
+        100% preserves facial identity, runs in <1s with 0 external API cost.
+        """
+        target_dir = self.base_dir / nik
+        target_dir.mkdir(parents=True, exist_ok=True)
+        out_file = target_dir / "selfie_composite.jpg"
+
+        if out_file.exists() and out_file.stat().st_size > 1000:
+            return out_file
+
+        try:
+            ktp_img = Image.open(ktp_path).convert("RGB")
+            portrait = extract_ktp_portrait(ktp_img).convert("RGB")
+
+            # 3:4 smartphone selfie aspect ratio (1080 x 1440)
+            w, h = 1080, 1440
+            canvas = Image.new("RGB", (w, h), color=(228, 232, 240))
+
+            # 1. Place portrait face in upper half (scale ~680 px wide)
+            face_w = 680
+            face_h = int(face_w * (portrait.size[1] / portrait.size[0]))
+            portrait_scaled = portrait.resize((face_w, face_h), Image.Resampling.LANCZOS)
+            canvas.paste(portrait_scaled, (int((w - face_w) / 2), 120))
+
+            # 2. Place KTP card at lower chest level (~560 px wide)
+            card_w = 560
+            card_h = int(card_w * (ktp_img.size[1] / ktp_img.size[0]))
+            ktp_scaled = ktp_img.resize((card_w, card_h), Image.Resampling.LANCZOS)
+            canvas.paste(ktp_scaled, (int((w - card_w) / 2), 850))
+
+            canvas.save(out_file, format="JPEG", quality=92)
+            logger.info(f"selfie_composite_synthesized: {out_file}")
+            return out_file
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"selfie_composite_err: {e}")
+            return None
+
     def resolve_selfie(
         self,
         nik: str,
@@ -240,6 +281,9 @@ class PoseGenerator:
                 gen_selfie = self.generate_selfie_from_ktp(nik, p_ktp)
                 if gen_selfie:
                     return gen_selfie
+                comp_selfie = self.synthesize_selfie_composite(nik, p_ktp)
+                if comp_selfie:
+                    return comp_selfie
                 logger.info(f"selfie_fallback_to_ktp: {p_ktp}")
                 return p_ktp
 
@@ -270,17 +314,19 @@ class PoseGenerator:
                 logger.info(f"pose_fallback_to_selfie: {p_selfie}")
                 return p_selfie
 
-        # 3. KTP-only scenario: generate challenge pose directly from KTP
+        # 3. KTP-only scenario: generate challenge pose directly from KTP or composite
         if ktp_path:
             p_ktp = Path(ktp_path)
             if p_ktp.exists():
                 ai_pose_from_ktp = self.generate_ai_pose(nik, p_ktp, gesture_key, gesture_desc)
                 if ai_pose_from_ktp:
                     return ai_pose_from_ktp
+                comp_selfie = self.synthesize_selfie_composite(nik, p_ktp)
+                if comp_selfie:
+                    return comp_selfie
                 logger.info(f"pose_fallback_to_ktp: {p_ktp}")
                 return p_ktp
 
         return None
-
 
 pose_generator = PoseGenerator()

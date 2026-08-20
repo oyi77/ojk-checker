@@ -98,30 +98,32 @@ def test_resolve_pose_fallback_to_selfie(tmp_path: Path):
         assert resolved == selfie
 
 
-def test_resolve_selfie_from_ktp_fallback(tmp_path: Path):
+def test_resolve_selfie_from_ktp_composite(tmp_path: Path):
     nik = "3517181901000002"
     ktp = tmp_path / "ktp.jpg"
-    img = Image.new("RGB", (100, 100), color="green")
+    img = Image.new("RGB", (856, 540), color="green")
     img.save(ktp, format="JPEG")
 
     pg = PoseGenerator(base_dir=tmp_path)
     with mock.patch.object(pg, "generate_selfie_from_ktp", return_value=None):
         resolved = pg.resolve_selfie(nik, None, ktp)
-        assert resolved == ktp
+        assert resolved is not None
+        assert resolved.exists()
+        assert "selfie_composite" in resolved.name
 
 
 def test_resolve_pose_from_ktp_only(tmp_path: Path):
     nik = "3517181901000002"
     ktp = tmp_path / "ktp.jpg"
-    img = Image.new("RGB", (100, 100), color="green")
+    img = Image.new("RGB", (856, 540), color="green")
     img.save(ktp, format="JPEG")
 
     pg = PoseGenerator(base_dir=tmp_path)
     with mock.patch.object(pg, "generate_ai_pose", return_value=None):
         resolved = pg.resolve_pose(nik, None, ktp, "5A_B")
-        assert resolved == ktp
-
-
+        assert resolved is not None
+        assert resolved.exists()
+        assert "selfie_composite" in resolved.name
 def test_resolve_pose_no_inputs():
     pg = PoseGenerator()
     assert pg.resolve_pose("123", None, None, "5A_B") is None
