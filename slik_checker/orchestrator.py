@@ -16,6 +16,7 @@ from slik_checker.logging_config import get_logger
 from slik_checker.models import db
 from slik_checker.notifier import notifier
 from slik_checker.parser import parser
+from slik_checker.pose_generator import pose_generator
 from slik_checker.scraper import scraper
 
 logger = get_logger(__name__)
@@ -100,6 +101,13 @@ class Orchestrator:
         """
         data: dict[str, str] = dict(scraper.extract_hidden_inputs(soup))
         data["postm"] = scraper.build_postm(html, server_ts)
+
+        challenge_code = data.get("TDAFTAR_KODE_CHALLENGE", "5A_B")
+        chal_path = reg.foto_challenge_path
+        if not chal_path and reg.foto_selfie_path:
+            p_res = pose_generator.resolve_pose(reg.nik, reg.foto_selfie_path, challenge_code)
+            if p_res:
+                chal_path = str(p_res)
 
         exact = {
             "JDEBITUR_ID": str(reg.jd_id),
