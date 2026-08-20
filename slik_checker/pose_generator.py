@@ -106,11 +106,53 @@ class PoseGenerator:
         base = str(settings.pose_ai_api_base).rstrip("/")
         api_key = settings.pose_ai_api_key or settings.vision_captcha_api_key
         api_key_val = api_key.get_secret_value() if api_key else ""
-        model = settings.pose_ai_model or "nano-banana-pro-preview"
+        model = settings.pose_ai_model or "lmarena/gemini-2.5-flash-image-preview (nano-banana)"
         headers = {"Content-Type": "application/json"}
         if api_key_val:
             headers["Authorization"] = f"Bearer {api_key_val}"
 
+        # Encode primary reference image to base64
+        b64_primary = ""
+        if images:
+            buf = io.BytesIO()
+            images[0][0].save(buf, format="JPEG", quality=85)
+            b64_primary = base64.b64encode(buf.getvalue()).decode()
+
+        # 1. Try POST /images/generations (Standard for image-generation & nano-banana models)
+        gen_payload: dict[str, Any] = {
+            "model": model,
+            "prompt": prompt,
+            "n": 1,
+            "response_format": "b64_json",
+        }
+        if b64_primary:
+            gen_payload["image"] = b64_primary
+
+        try:
+            resp = requests.post(f"{base}/images/generations", headers=headers, json=gen_payload, timeout=40)
+            if resp.status_code == 200:
+                data = resp.json()
+                items = data.get("data", [])
+                if items:
+                    b64_str = items[0].get("b64_json")
+                    img_url = items[0].get("url")
+                    if b64_str:
+                        raw = base64.b64decode(b64_str)
+                        out_file.parent.mkdir(parents=True, exist_ok=True)
+                        out_file.write_bytes(raw)
+                        logger.info(f"omniroute_pose_generated_success: model={model} | {out_file}")
+                        return out_file
+                    if img_url:
+                        r_fetch = requests.get(img_url, timeout=30)
+                        if r_fetch.status_code == 200:
+                            out_file.parent.mkdir(parents=True, exist_ok=True)
+                            out_file.write_bytes(r_fetch.content)
+                            logger.info(f"omniroute_pose_downloaded_success: model={model} | {out_file}")
+                            return out_file
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"omniroute_images_gen_err: {e}")
+
+        # 2. Try POST /chat/completions (For multimodal vision models)
         content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
         for img, label in images:
             buf = io.BytesIO()
@@ -136,7 +178,7 @@ class PoseGenerator:
                     logger.info(f"omniroute_pose_generated_success: model={model} | {out_file}")
                     return out_file
         except Exception as e:  # noqa: BLE001
-            logger.warning(f"omniroute_gateway_err: {e}")
+            logger.warning(f"omniroute_chat_comp_err: {e}")
         return None
 
     def _call_gemini_multimodal(
