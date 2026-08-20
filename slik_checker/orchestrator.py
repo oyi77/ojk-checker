@@ -680,7 +680,8 @@ class Orchestrator:
                 result = parser.parse_status(str(rs))
                 # A misread captcha comes back as "Captcha tidak valid" — retry
                 # with a fresh captcha instead of recording a false failure.
-                if "captcha" in str(rs).lower() and result.status in ("ERROR", "UNKNOWN"):
+                rs_str = str(rs).lower()
+                if ("captcha tidak valid" in rs_str or "captcha salah" in rs_str) and result.status in ("ERROR", "UNKNOWN"):
                     db.add_log(
                         message="Status captcha mismatch, retrying",
                         level="WARNING",
