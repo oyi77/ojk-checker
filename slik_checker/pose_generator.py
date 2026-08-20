@@ -115,7 +115,11 @@ class PoseGenerator:
         api_key_val = api_key.get_secret_value() if api_key else ""
         headers = {"Content-Type": "application/json"}
         if api_key_val:
+            # The gateway accepts either scheme; some backends (e.g. the
+            # openai-compatible-chat/* backend behind agnes) require X-API-Key
+            # rather than Authorization: Bearer. Send both for max compatibility.
             headers["Authorization"] = f"Bearer {api_key_val}"
+            headers["X-API-Key"] = api_key_val
 
         # Encode primary reference image to base64
         b64_primary = ""
