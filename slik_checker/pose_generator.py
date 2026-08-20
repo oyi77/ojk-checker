@@ -253,6 +253,88 @@ class PoseGenerator:
             logger.warning(f"ai_generation_err: {e}")
 
         return None
+
+    def _call_agnes_direct(
+        self,
+        images: list[tuple[Image.Image, str]],
+        prompt: str,
+        out_file: Path,
+    ) -> Path | None:
+        """Generate the image via Agnes AI's direct public API (free tier).
+
+        Agnes AI exposes an OpenAI-compatible image endpoint at
+        ``settings.agnes_api_base`` (default https://apihub.agnes-ai.com/v1).
+        This is independent of the OmniRoute gateway and only requires the user's
+        own free Agnes API key. Returns the written image path on success, else
+        None so the caller falls back further (composite / raw KTP).
+        """
+        if not settings.agnes_api_key:
+            return None
+
+        base = str(settings.agnes_api_base).rstrip("/")
+        key = settings.agnes_api_key.get_secret_value()
+        headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+
+        b64_primary = ""
+        if images:
+            buf = io.BytesIO()
+            images[0][0].save(buf, format="JPEG", quality=85)
+            b64_primary = base64.b64encode(buf.getvalue()).decode()
+
+        model = settings.agnes_model or "agnes-image-2.0-flash"
+        payload: dict[str, Any] = {
+            "model": model,
+            "prompt": prompt,
+            "n": 1,
+            "response_format": "b64_json",
+        }
+        if b64_primary:
+            payload["image"] = b64_primary
+
+        try:
+            resp = requests.post(
+                f"{base}/images/generations", headers=headers, json=payload, timeout=60
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"agnes_direct_err: {e}")
+            return None
+
+        if resp.status_code != 200:
+            logger.warning(
+                f"agnes_direct_unsuccessful: status={resp.status_code} | {resp.text[:120]}"
+            )
+            return None
+
+        try:
+            data = resp.json()
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"agnes_direct_parse_err: {e}")
+            return None
+
+        items = data.get("data", [])
+        if not items:
+            logger.warning("agnes_direct_empty_response")
+            return None
+
+        b64_str = items[0].get("b64_json")
+        img_url = items[0].get("url")
+        if b64_str:
+            raw = base64.b64decode(b64_str)
+            out_file.parent.mkdir(parents=True, exist_ok=True)
+            out_file.write_bytes(raw)
+            logger.info(f"agnes_direct_generated_success: model={model} | {out_file}")
+            return out_file
+        if img_url:
+            try:
+                r_fetch = requests.get(img_url, timeout=30)
+                if r_fetch.status_code == 200:
+                    out_file.parent.mkdir(parents=True, exist_ok=True)
+                    out_file.write_bytes(r_fetch.content)
+                    logger.info(f"agnes_direct_downloaded_success: model={model} | {out_file}")
+                    return out_file
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"agnes_direct_fetch_err: {e}")
+        return None
     def generate_selfie_from_ktp(self, nik: str, ktp_path: Path) -> Path | None:
         """Synthesize an authentic selfie holding e-KTP with 1:1 facial identity locking."""
         target_dir = self.base_dir / nik
@@ -288,7 +370,10 @@ class PoseGenerator:
             (face_portrait, "Cropped Face Portrait (Primary Facial Biometric Identity Reference)"),
             (full_ktp, "Full Indonesian e-KTP Card (Document Reference)"),
         ]
-        return self._call_gemini_multimodal(images, prompt, out_file)
+        gen = self._call_gemini_multimodal(images, prompt, out_file)
+        if gen:
+            return gen
+        return self._call_agnes_direct(images, prompt, out_file)
 
     def generate_ai_pose(
         self,
@@ -327,7 +412,10 @@ class PoseGenerator:
         )
 
         images = [(face_img, "Person Identity Reference"), (ref_img, "Full Context Reference")]
-        return self._call_gemini_multimodal(images, prompt, out_file)
+        gen = self._call_gemini_multimodal(images, prompt, out_file)
+        if gen:
+            return gen
+        return self._call_agnes_direct(images, prompt, out_file)
 
     def synthesize_selfie_composite(self, nik: str, ktp_path: Path) -> Path | None:
         """Deterministically synthesize a selfie holding the e-KTP from the KTP card.

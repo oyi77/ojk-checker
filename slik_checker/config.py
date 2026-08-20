@@ -81,6 +81,13 @@ class Settings(BaseSettings):
     pose_ai_api_base: str | None = None
     pose_ai_api_key: SecretStr | None = None
     pose_ai_model: str = "nano-banana-pro-preview"
+    # --- Direct Agnes AI image generation (free public API; needs YOUR OWN key) ---
+    # Agnes AI endpoint: https://apihub.agnes-ai.com/v1  (OpenAI-compatible /v1/images/generations)
+    # Get a free key (no credit card) at https://agnes-ai.com -> dashboard.
+    # Used as an image-generation fallback when the OmniRoute gateway has no image quota.
+    agnes_api_base: str = "https://apihub.agnes-ai.com/v1"
+    agnes_api_key: SecretStr | None = None
+    agnes_model: str = "agnes-image-2.0-flash"
     external_captcha_service_url: HttpUrl = HttpUrl("http://2captcha.com/in.php")  # type: ignore[call-arg]
     external_captcha_result_url: HttpUrl = HttpUrl("http://2captcha.com/res.php")  # type: ignore[call-arg]
     external_captcha_poll_interval: int = 5  # seconds

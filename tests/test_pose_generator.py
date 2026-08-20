@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import base64
+import io
 from pathlib import Path
 from unittest import mock
 
 from PIL import Image
+from pydantic import SecretStr
 
+from slik_checker.config import settings
 from slik_checker.pose_generator import (
     PoseGenerator,
     extract_ktp_portrait,
@@ -128,3 +132,55 @@ def test_resolve_pose_no_inputs():
     pg = PoseGenerator()
     assert pg.resolve_pose("123", None, None, "5A_B") is None
     assert pg.resolve_selfie("123", None, None) is None
+
+
+
+
+def _tiny_png_b64() -> str:
+    buf = io.BytesIO()
+    Image.new("RGB", (4, 4), color="red").save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+def test_call_agnes_direct_success(tmp_path: Path):
+    settings.agnes_api_key = SecretStr("agnes-test-key")
+    try:
+        pg = PoseGenerator(base_dir=tmp_path)
+        out = tmp_path / "agn1" / "selfie.jpg"
+        fake = mock.Mock()
+        fake.status_code = 200
+        fake.json.return_value = {"data": [{"b64_json": _tiny_png_b64()}]}
+        with mock.patch("slik_checker.pose_generator.requests.post", return_value=fake) as m:
+            res = pg._call_agnes_direct([(Image.new("RGB", (10, 10)), "x")], "prompt", out)
+        assert res == out
+        assert out.exists()
+        m.assert_called_once()
+    finally:
+        settings.agnes_api_key = None
+
+
+def test_call_agnes_direct_no_key(tmp_path: Path):
+    settings.agnes_api_key = None
+    pg = PoseGenerator(base_dir=tmp_path)
+    out = tmp_path / "agn2" / "selfie.jpg"
+    with mock.patch("slik_checker.pose_generator.requests.post") as m:
+        res = pg._call_agnes_direct([(Image.new("RGB", (10, 10)), "x")], "prompt", out)
+    assert res is None
+    m.assert_not_called()
+
+
+def test_call_agnes_direct_401(tmp_path: Path):
+    settings.agnes_api_key = SecretStr("agnes-test-key")
+    try:
+        pg = PoseGenerator(base_dir=tmp_path)
+        out = tmp_path / "agn3" / "selfie.jpg"
+        fake = mock.Mock()
+        fake.status_code = 401
+        fake.text = "unauthorized"
+        fake.json.return_value = {}
+        with mock.patch("slik_checker.pose_generator.requests.post", return_value=fake):
+            res = pg._call_agnes_direct([(Image.new("RGB", (10, 10)), "x")], "prompt", out)
+        assert res is None
+        assert not out.exists()
+    finally:
+        settings.agnes_api_key = None
