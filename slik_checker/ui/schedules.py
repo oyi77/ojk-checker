@@ -113,6 +113,14 @@ def show() -> None:
                                     nomor_hp=deb.get("nomor_hp") or "",
                                     jenis_debitur=deb.get("jenis_debitur") or "Perseorangan",
                                     ktp_path=deb.get("ktp_path") or "",
+                                    jenis_kelamin=deb.get("jenis_kelamin") or "L",
+                                    alamat=deb.get("alamat") or "",
+                                    kode_provinsi=deb.get("kode_provinsi") or "12",
+                                    kode_kota=deb.get("kode_kota") or "1204",
+                                    ibu_kandung=deb.get("ibu_kandung") or "",
+                                    tujuan_permohonan=deb.get("tujuan_permohonan") or 41,
+                                    foto_selfie_path=deb.get("foto_selfie_path") or "",
+                                    foto_challenge_path=deb.get("foto_challenge_path") or "",
                                 )
                                 if result.get("success"):
                                     st.success(f"Pendaftaran Berhasil! No. Daftar: {result.get('nomor_pendaftaran')}")

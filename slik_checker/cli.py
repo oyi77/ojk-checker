@@ -35,6 +35,15 @@ def main() -> None:
     reg_parser.add_argument("--jenis-identitas", default="KTP")
     reg_parser.add_argument("--email", default="")
     reg_parser.add_argument("--nomor-hp", default="")
+    reg_parser.add_argument("--jenis-kelamin", choices=["L", "P"], default="L")
+    reg_parser.add_argument("--alamat", default="")
+    reg_parser.add_argument("--provinsi", default="12")
+    reg_parser.add_argument("--kota", default="1204")
+    reg_parser.add_argument("--ibu-kandung", default="")
+    reg_parser.add_argument("--tujuan-permohonan", type=int, default=41)
+    reg_parser.add_argument("--foto-ktp", default="")
+    reg_parser.add_argument("--foto-selfie", default="")
+    reg_parser.add_argument("--foto-challenge", default="")
     reg_parser.add_argument(
         "--captcha-mode",
         choices=["auto", "manual", "vision"],
@@ -124,6 +133,15 @@ def main() -> None:
                 email=args.email,
                 nomor_hp=args.nomor_hp,
                 jenis_debitur=args.jenis_debitur,
+                jenis_kelamin=args.jenis_kelamin,
+                alamat=args.alamat,
+                kode_provinsi=args.provinsi,
+                kode_kota=args.kota,
+                ibu_kandung=args.ibu_kandung,
+                tujuan_permohonan=args.tujuan_permohonan,
+                ktp_path=args.foto_ktp,
+                foto_selfie_path=args.foto_selfie,
+                foto_challenge_path=args.foto_challenge,
             )
             name = args.schedule_name or f"Register {args.nama} ({args.nik})"
             sid = db.add_schedule(debitur_id, name, args.cron, action="register")
@@ -143,6 +161,15 @@ def main() -> None:
             jenis_identitas=args.jenis_identitas,
             email=args.email,
             nomor_hp=args.nomor_hp,
+            jenis_kelamin=args.jenis_kelamin,
+            alamat=args.alamat,
+            kode_provinsi=args.provinsi,
+            kode_kota=args.kota,
+            ibu_kandung=args.ibu_kandung,
+            tujuan_permohonan=args.tujuan_permohonan,
+            ktp_path=args.foto_ktp,
+            foto_selfie_path=args.foto_selfie,
+            foto_challenge_path=args.foto_challenge,
         )
         print(f"Status: {result['status']}")
         print(f"Success: {result['success']}")

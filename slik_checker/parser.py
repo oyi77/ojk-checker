@@ -133,14 +133,17 @@ class Parser:
         return None
     @staticmethod
     def _extract_nomor_pendaftaran(text: str) -> str | None:
-        # Capture only valid code characters so trailing punctuation/HTML/quotes
-        # (e.g. a number inside a swal string like "...REG-XYZ'})") is excluded.
-        m = re.search(r"nomor\s+pendaftaran[:\s]*([A-Za-z0-9\-]+)", text, re.IGNORECASE)
+        # Match official iDebKu format (e.g. OL/PS/DPLK/200826/09110853100282.)
+        m_ol = re.search(r"\b(OL/[A-Za-z0-9/\.\-]+)", text, re.IGNORECASE)
+        if m_ol:
+            return m_ol.group(1).strip()
+        m = re.search(r"nomor\s+pendaftaran[:\s]*([A-Za-z0-9/\.\-]+)", text, re.IGNORECASE)
         if m:
-            return m.group(1)
-        m = re.search(r"no\.?\s*pendaftaran[:\s]*([A-Za-z0-9\-]+)", text, re.IGNORECASE)
-        return m.group(1) if m else None
-
+            return m.group(1).strip()
+        m2 = re.search(r"([A-Z]{2,4}/[A-Za-z0-9/\.\-]+)", text)
+        if m2:
+            return m2.group(1).strip()
+        return None
     @staticmethod
     def _has_success(text: str) -> bool:
         return any(

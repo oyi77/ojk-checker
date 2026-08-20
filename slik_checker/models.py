@@ -27,7 +27,15 @@ CREATE TABLE IF NOT EXISTS debiturs (
     email TEXT DEFAULT '',
     nomor_hp TEXT DEFAULT '',
     jenis_debitur TEXT DEFAULT 'Perseorangan',
+    jenis_kelamin TEXT DEFAULT 'L',
+    alamat TEXT DEFAULT '',
+    kode_provinsi TEXT DEFAULT '12',
+    kode_kota TEXT DEFAULT '1204',
+    ibu_kandung TEXT DEFAULT '',
+    tujuan_permohonan INTEGER DEFAULT 41,
     ktp_path TEXT DEFAULT '',
+    foto_selfie_path TEXT DEFAULT '',
+    foto_challenge_path TEXT DEFAULT '',
     nomor_pendaftaran TEXT DEFAULT '',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -119,6 +127,20 @@ class Database:
                 conn.execute(
                     "ALTER TABLE schedules ADD COLUMN action TEXT NOT NULL DEFAULT 'check'"
                 )
+            deb_cols = {r["name"] for r in conn.execute("PRAGMA table_info(debiturs)").fetchall()}
+            migrations = [
+                ("jenis_kelamin", "TEXT DEFAULT 'L'"),
+                ("alamat", "TEXT DEFAULT ''"),
+                ("kode_provinsi", "TEXT DEFAULT '12'"),
+                ("kode_kota", "TEXT DEFAULT '1204'"),
+                ("ibu_kandung", "TEXT DEFAULT ''"),
+                ("tujuan_permohonan", "INTEGER DEFAULT 41"),
+                ("foto_selfie_path", "TEXT DEFAULT ''"),
+                ("foto_challenge_path", "TEXT DEFAULT ''"),
+            ]
+            for col, col_type in migrations:
+                if col not in deb_cols:
+                    conn.execute(f"ALTER TABLE debiturs ADD COLUMN {col} {col_type}")
             logger.info(f"database_initialized: {self._db_path}")
 
     def upsert_debitur(self, **fields: Any) -> int:
@@ -136,9 +158,17 @@ class Database:
                 "email",
                 "nomor_hp",
                 "jenis_debitur",
+                "jenis_kelamin",
+                "alamat",
+                "kode_provinsi",
+                "kode_kota",
+                "ibu_kandung",
+                "tujuan_permohonan",
                 "ktp_path",
+                "foto_selfie_path",
+                "foto_challenge_path",
             ]
-            values = {k: fields.get(k, "") for k in field_names}
+            values = {k: fields.get(k, 41 if k == "tujuan_permohonan" else "") for k in field_names}
 
             if existing:
                 set_clause = ", ".join(f"{k} = ?" for k in field_names)

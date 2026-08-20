@@ -371,6 +371,14 @@ class Orchestrator:
         nomor_hp: str = "",
         jenis_debitur: str = "Perseorangan",
         ktp_path: str = "",
+        jenis_kelamin: str = "L",
+        alamat: str = "",
+        kode_provinsi: str = "12",
+        kode_kota: str = "1204",
+        ibu_kandung: str = "",
+        tujuan_permohonan: int = 41,
+        foto_selfie_path: str = "",
+        foto_challenge_path: str = "",
     ) -> dict[str, Any]:
         logger.info(f"register: nama={nama} | nik={nik}")
 
@@ -385,6 +393,14 @@ class Orchestrator:
             nomor_hp=nomor_hp,
             jenis_debitur=jenis_debitur,
             ktp_path=ktp_path,
+            jenis_kelamin=jenis_kelamin,
+            alamat=alamat,
+            kode_provinsi=kode_provinsi,
+            kode_kota=kode_kota,
+            ibu_kandung=ibu_kandung,
+            tujuan_permohonan=tujuan_permohonan,
+            foto_selfie_path=foto_selfie_path,
+            foto_challenge_path=foto_challenge_path,
         )
 
         if not captcha_solver.available:
@@ -408,6 +424,15 @@ class Orchestrator:
             email=email,
             nomor_hp=nomor_hp,
             jenis_debitur=jenis_debitur,
+            jenis_kelamin=jenis_kelamin,
+            alamat=alamat,
+            kode_provinsi=kode_provinsi,
+            kode_kota=kode_kota,
+            ibu_kandung=ibu_kandung,
+            tujuan_permohonan=tujuan_permohonan,
+            foto_ktp_path=ktp_path,
+            foto_selfie_path=foto_selfie_path,
+            foto_challenge_path=foto_challenge_path,
             jd_id=jd_id,
             kw_id=kw_id,
             ident_id=ident_id,

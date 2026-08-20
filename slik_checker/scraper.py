@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import time
+from pathlib import Path
 from urllib.parse import urljoin
 
 import requests
@@ -196,6 +197,28 @@ class Scraper:
         with open(path, encoding="utf-8") as f:
             self.session.cookies = requests.utils.cookiejar_from_dict(json.load(f))
         self._primed = True
+    @retry(
+        stop=stop_after_attempt(settings.max_retries),
+        wait=wait_exponential(multiplier=settings.retry_backoff),
+    )
+    def upload_attachment(
+        self, file_path: str | Path, file_field: str = "attUpload"
+    ) -> dict[str, str]:
+        """Upload a KTP/Selfie/Challenge photo attachment to iDebKu portal."""
+        p = Path(file_path)
+        if not p.exists():
+            return {}
+        url = urljoin(str(settings.ideb_base_url), "/Public/PendaftaranOnline/UploadAttachment")
+        self.session.headers.update({"Origin": str(settings.ideb_base_url)})
+        with open(p, "rb") as f:
+            files = {file_field: (p.name, f, "image/jpeg")}
+            resp = self.session.post(url, files=files, timeout=settings.request_timeout)
+        if resp.status_code == 200:
+            try:
+                return resp.json()
+            except Exception:
+                return {}
+        return {}
 
 
 scraper = Scraper()
