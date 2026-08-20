@@ -114,37 +114,41 @@ class PoseGenerator:
                 b64 = base64.b64encode(buf.getvalue()).decode()
                 parts.append({"text": f"Reference [{label}]:"})
                 parts.append({"inline_data": {"mime_type": "image/jpeg", "data": b64}})
-
-            url = (
-                f"https://generativelanguage.googleapis.com/v1beta/models/"
-                f"gemini-2.5-flash-image:generateContent?key={api_key_val}"
-            )
-            payload = {
-                "contents": [{"parts": parts}],
-                "generationConfig": {"responseMimeType": "image/jpeg"},
-            }
-
-            resp = requests.post(url, json=payload, timeout=30)
-            if resp.status_code == 200:
-                data = resp.json()
-                candidates = data.get("candidates", [])
-                if candidates:
-                    resp_parts = candidates[0].get("content", {}).get("parts", [])
-                    for part in resp_parts:
-                        inline = part.get("inline_data", {})
-                        if inline.get("data"):
-                            img_bytes = base64.b64decode(inline["data"])
-                            out_file.parent.mkdir(parents=True, exist_ok=True)
-                            out_file.write_bytes(img_bytes)
-                            logger.info(f"ai_photo_generated_success: {out_file}")
-                            return out_file
-
-            logger.warning(f"ai_generation_unsuccessful: status={resp.status_code}")
+            models_to_try = [
+                "nano-banana-pro-preview",
+                "gemini-3.1-flash-image-preview",
+                "gemini-3.1-flash-image",
+                "gemini-2.5-flash-image",
+            ]
+            for m in models_to_try:
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={api_key_val}"
+                payload = {
+                    "contents": [{"parts": parts}],
+                    "generationConfig": {"responseModalities": ["IMAGE", "TEXT"]},
+                }
+                try:
+                    resp = requests.post(url, json=payload, timeout=40)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        candidates = data.get("candidates", [])
+                        if candidates:
+                            resp_parts = candidates[0].get("content", {}).get("parts", [])
+                            for part in resp_parts:
+                                inline = part.get("inlineData") or part.get("inline_data")
+                                if inline and inline.get("data"):
+                                    img_bytes = base64.b64decode(inline["data"])
+                                    out_file.parent.mkdir(parents=True, exist_ok=True)
+                                    out_file.write_bytes(img_bytes)
+                                    logger.info(f"ai_photo_generated_success: model={m} | {out_file}")
+                                    return out_file
+                    logger.warning(f"ai_generation_model_unsuccessful: model={m} | status={resp.status_code}")
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"ai_generation_model_err: model={m} | {e}")
+                    continue
         except Exception as e:  # noqa: BLE001
             logger.warning(f"ai_generation_err: {e}")
 
         return None
-
     def generate_selfie_from_ktp(self, nik: str, ktp_path: Path) -> Path | None:
         """Synthesize an authentic selfie holding e-KTP with 1:1 facial identity locking."""
         target_dir = self.base_dir / nik
