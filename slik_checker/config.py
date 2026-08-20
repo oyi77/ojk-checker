@@ -77,6 +77,10 @@ class Settings(BaseSettings):
         "Transcribe the exact characters shown, in order, with no spaces or "
         "punctuation. Return only the characters."
     )
+    # --- Pose / Image Generation AI (OmniRoute / Agnes / OpenAI Gateway / Gemini) ---
+    pose_ai_api_base: str | None = None
+    pose_ai_api_key: SecretStr | None = None
+    pose_ai_model: str = "nano-banana-pro-preview"
     external_captcha_service_url: HttpUrl = HttpUrl("http://2captcha.com/in.php")  # type: ignore[call-arg]
     external_captcha_result_url: HttpUrl = HttpUrl("http://2captcha.com/res.php")  # type: ignore[call-arg]
     external_captcha_poll_interval: int = 5  # seconds

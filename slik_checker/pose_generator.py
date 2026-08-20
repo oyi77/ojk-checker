@@ -93,13 +93,63 @@ class PoseGenerator:
                             return f
         return None
 
+    def _call_omniroute_gateway(
+        self,
+        images: list[tuple[Image.Image, str]],
+        prompt: str,
+        out_file: Path,
+    ) -> Path | None:
+        """Invoke OmniRoute / Agnes / OpenAI-compatible AI gateway."""
+        if not settings.pose_ai_api_base:
+            return None
+
+        base = str(settings.pose_ai_api_base).rstrip("/")
+        api_key = settings.pose_ai_api_key or settings.vision_captcha_api_key
+        api_key_val = api_key.get_secret_value() if api_key else ""
+        model = settings.pose_ai_model or "nano-banana-pro-preview"
+        headers = {"Content-Type": "application/json"}
+        if api_key_val:
+            headers["Authorization"] = f"Bearer {api_key_val}"
+
+        content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        for img, label in images:
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=85)
+            b64 = base64.b64encode(buf.getvalue()).decode()
+            content.append({"type": "text", "text": f"[{label}]"})
+            content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
+
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": content}],
+        }
+        try:
+            resp = requests.post(f"{base}/chat/completions", headers=headers, json=payload, timeout=40)
+            if resp.status_code == 200:
+                data = resp.json()
+                msg = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                img_match = re.search(r"data:image/[a-zA-Z]+;base64,([A-Za-z0-9+/=]+)", msg)
+                if img_match:
+                    raw = base64.b64decode(img_match.group(1))
+                    out_file.parent.mkdir(parents=True, exist_ok=True)
+                    out_file.write_bytes(raw)
+                    logger.info(f"omniroute_pose_generated_success: model={model} | {out_file}")
+                    return out_file
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"omniroute_gateway_err: {e}")
+        return None
+
     def _call_gemini_multimodal(
         self,
         images: list[tuple[Image.Image, str]],
         prompt: str,
         out_file: Path,
     ) -> Path | None:
-        """Invoke Gemini multimodal image generation with multi-image biometric anchors."""
+        """Invoke OmniRoute / Agnes gateway first, with fallback to native Gemini."""
+        omni_res = self._call_omniroute_gateway(images, prompt, out_file)
+        if omni_res:
+            return omni_res
+
         api_key = settings.vision_captcha_api_key
         if not api_key:
             logger.debug("ai_generation_skipped: no API key configured")
@@ -114,7 +164,9 @@ class PoseGenerator:
                 b64 = base64.b64encode(buf.getvalue()).decode()
                 parts.append({"text": f"Reference [{label}]:"})
                 parts.append({"inline_data": {"mime_type": "image/jpeg", "data": b64}})
+
             models_to_try = [
+                settings.pose_ai_model,
                 "nano-banana-pro-preview",
                 "gemini-3.1-flash-image-preview",
                 "gemini-3.1-flash-image",
