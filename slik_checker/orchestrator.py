@@ -492,7 +492,7 @@ class Orchestrator:
                     "nomor_pendaftaran": None,
                 }
             else:
-                if attempt["status"] in ("NEXT_STEP", "SUBMITTED", "REGISTERED"):
+                if attempt["status"] in ("IN_QUEUE", "NEXT_STEP", "SUBMITTED", "REGISTERED"):
                     break
                 if attempt["status"] == "QUOTA_FULL":
                     logger.info(f"attempt_quota_full: round={round_idx + 1}/{max_rounds} | retrying in 1s")
@@ -501,7 +501,7 @@ class Orchestrator:
                 logger.warning(f"attempt_inconclusive: round={round_idx + 1} | {attempt['status']}")
                 time.sleep(1)
         status = attempt["status"]
-        is_success = status in ("NEXT_STEP", "SUBMITTED", "REGISTERED")
+        is_success = status in ("IN_QUEUE", "NEXT_STEP", "SUBMITTED", "REGISTERED")
         nomor = attempt.get("nomor_pendaftaran")
         db.add_result(debitur_id, status, is_success, nomor=nomor)
 

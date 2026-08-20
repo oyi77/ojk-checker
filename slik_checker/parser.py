@@ -62,8 +62,13 @@ class Parser:
 
         swal_msg = self._extract_sweetalert(html)
         if swal_msg:
+            if "dalam antrian" in swal_msg.lower() or "sudah terdaftar" in swal_msg.lower():
+                return ParseResult(
+                    success=True,
+                    status="IN_QUEUE",
+                    message=swal_msg,
+                )
             return ParseResult(success=False, status="ERROR", message=swal_msg)
-
         if self._has_success(text_lower):
             return ParseResult(
                 success=True, status="NEXT_STEP", message="Form valid, lanjut ke step berikutnya"
