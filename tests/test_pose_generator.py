@@ -1,4 +1,4 @@
-"""Unit tests for the Smart Challenge Pose & Selfie Generator (slik_checker.pose_generator)."""
+"""Unit tests for the Smart Challenge Pose & Selfie Generator with Facial Identity Locking."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from PIL import Image
 
 from slik_checker.pose_generator import (
     PoseGenerator,
+    extract_ktp_portrait,
     parse_challenge_gesture,
 )
 
@@ -29,8 +30,15 @@ def test_parse_challenge_gesture():
     assert parse_challenge_gesture("JA_B")[0] == "J"
     assert "thumbs-up" in parse_challenge_gesture("JA_B")[1]
 
-    # Unknown defaults to 5
     assert parse_challenge_gesture("UNKNOWN")[0] == "5"
+
+
+def test_extract_ktp_portrait():
+    img = Image.new("RGB", (856, 540), color="blue")
+    crop = extract_ktp_portrait(img)
+    assert crop is not None
+    assert crop.size[0] > 100
+    assert crop.size[1] > 100
 
 
 def test_find_local_preset(tmp_path: Path):
@@ -45,8 +53,6 @@ def test_find_local_preset(tmp_path: Path):
 
     found = pg.find_local_preset(nik, "5")
     assert found == p5
-
-    # Not found for other gesture
     assert pg.find_local_preset(nik, "1") is None
 
 
@@ -82,13 +88,11 @@ def test_resolve_pose_fallback_to_selfie(tmp_path: Path):
     nik = "3517181901000002"
     selfie = tmp_path / "selfie.jpg"
 
-    # Create a valid tiny image
     img = Image.new("RGB", (100, 100), color="blue")
     img.save(selfie, format="JPEG")
 
     pg = PoseGenerator(base_dir=tmp_path)
 
-    # Mock AI to fail/return None -> should fallback to selfie
     with mock.patch.object(pg, "generate_ai_pose", return_value=None):
         resolved = pg.resolve_pose(nik, selfie, None, "2A_B")
         assert resolved == selfie

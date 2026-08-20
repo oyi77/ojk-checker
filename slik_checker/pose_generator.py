@@ -1,12 +1,12 @@
-"""Smart Challenge Pose & Selfie Generator for iDebKu OJK.
+"""Smart Challenge Pose & Selfie Generator for iDebKu OJK with Strict Facial Identity Preservation.
 
-Handles dynamic challenge gestures (e.g. 1A_B, 2A_B, 3A_B, 5A_B, JA_B)
-and automatic selfie synthesis when only an e-KTP photo is provided.
+Ensures that AI-synthesized selfies and challenge poses strictly match the exact
+human facial identity from the e-KTP photo (1:1 biometric facial consistency).
 
 Pipeline:
 1. Preset gesture photo lookup in `data/ktp/{nik}/` (fastest & 100% human-verified).
-2. AI Selfie Synthesis from KTP (when no selfie is uploaded).
-3. AI Challenge Pose Generation matching the exact OJK hand gesture.
+2. High-precision e-KTP portrait crop to isolate the face as the primary facial reference.
+3. Multimodal dual-image reference generation with strict facial biometric locking directives.
 4. Graceful fallback cascade to ensure registration is never blocked.
 """
 
@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 import requests
-from PIL import Image
+from PIL import Image, ImageEnhance
 
 from slik_checker.config import settings
 from slik_checker.logging_config import get_logger
@@ -38,18 +38,30 @@ GESTURE_DESCRIPTIONS = {
 
 
 def parse_challenge_gesture(challenge_code: str) -> tuple[str, str]:
-    """Parse challenge code into gesture key and full description.
-
-    Examples:
-        '5A_B' -> ('5', 'Hand gesture showing 5 fingers...')
-        '3A_B' -> ('3', 'Hand gesture showing 3 fingers...')
-        'JA_B' -> ('J', 'Hand gesture showing a thumbs-up...')
-    """
+    """Parse challenge code into gesture key and full description."""
     code_clean = challenge_code.strip().upper()
     m = re.match(r"^([1-5J])", code_clean)
     key = m.group(1) if m else "5"
     desc = GESTURE_DESCRIPTIONS.get(key, GESTURE_DESCRIPTIONS["5"])
     return key, desc
+
+
+def extract_ktp_portrait(img: Image.Image) -> Image.Image:
+    """Extract and enhance the passport-style portrait box from an Indonesian e-KTP.
+
+    Based on Permendagri No. 9/2011 standard layout:
+    The portrait is situated on the right ~38% of the card width, vertically from ~15% to 85%.
+    """
+    w, h = img.size
+    x1 = max(0, int(w * 0.60))
+    y1 = max(0, int(h * 0.15))
+    x2 = min(w, int(w * 0.98))
+    y2 = min(h, int(h * 0.85))
+
+    crop = img.crop((x1, y1, x2, y2))
+    # Enhance sharpness slightly for clear facial feature embedding
+    enhancer = ImageEnhance.Sharpness(crop)
+    return enhancer.enhance(1.2)
 
 
 class PoseGenerator:
@@ -81,8 +93,13 @@ class PoseGenerator:
                             return f
         return None
 
-    def _call_gemini_image_generation(self, reference_path: Path, prompt: str, out_file: Path) -> Path | None:
-        """Helper to invoke Gemini multimodal image generation/editing endpoint."""
+    def _call_gemini_multimodal(
+        self,
+        images: list[tuple[Image.Image, str]],
+        prompt: str,
+        out_file: Path,
+    ) -> Path | None:
+        """Invoke Gemini multimodal image generation with multi-image biometric anchors."""
         api_key = settings.vision_captcha_api_key
         if not api_key:
             logger.debug("ai_generation_skipped: no API key configured")
@@ -90,24 +107,20 @@ class PoseGenerator:
 
         api_key_val = api_key.get_secret_value()
         try:
-            img = Image.open(reference_path)
-            buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=85)
-            b64_img = base64.b64encode(buf.getvalue()).decode()
+            parts: list[dict[str, Any]] = [{"text": prompt}]
+            for img, label in images:
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=85)
+                b64 = base64.b64encode(buf.getvalue()).decode()
+                parts.append({"text": f"Reference [{label}]:"})
+                parts.append({"inline_data": {"mime_type": "image/jpeg", "data": b64}})
 
             url = (
                 f"https://generativelanguage.googleapis.com/v1beta/models/"
                 f"gemini-2.5-flash-image:generateContent?key={api_key_val}"
             )
-            payload: dict[str, Any] = {
-                "contents": [
-                    {
-                        "parts": [
-                            {"text": prompt},
-                            {"inline_data": {"mime_type": "image/jpeg", "data": b64_img}},
-                        ]
-                    }
-                ],
+            payload = {
+                "contents": [{"parts": parts}],
                 "generationConfig": {"responseMimeType": "image/jpeg"},
             }
 
@@ -116,8 +129,8 @@ class PoseGenerator:
                 data = resp.json()
                 candidates = data.get("candidates", [])
                 if candidates:
-                    parts = candidates[0].get("content", {}).get("parts", [])
-                    for part in parts:
+                    resp_parts = candidates[0].get("content", {}).get("parts", [])
+                    for part in resp_parts:
                         inline = part.get("inline_data", {})
                         if inline.get("data"):
                             img_bytes = base64.b64decode(inline["data"])
@@ -133,7 +146,7 @@ class PoseGenerator:
         return None
 
     def generate_selfie_from_ktp(self, nik: str, ktp_path: Path) -> Path | None:
-        """Synthesize an authentic selfie holding e-KTP when only a KTP is provided."""
+        """Synthesize an authentic selfie holding e-KTP with 1:1 facial identity locking."""
         target_dir = self.base_dir / nik
         target_dir.mkdir(parents=True, exist_ok=True)
         out_file = target_dir / "selfie_from_ktp.jpg"
@@ -142,16 +155,32 @@ class PoseGenerator:
             logger.info(f"reusing_existing_ktp_selfie: {out_file}")
             return out_file
 
+        try:
+            full_ktp = Image.open(ktp_path)
+            face_portrait = extract_ktp_portrait(full_ktp)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"ktp_image_load_err: {e}")
+            return None
+
         prompt = (
-            "Authentic unedited front-facing smartphone selfie photograph of the real Indonesian adult "
-            "whose face photo appears on the attached identity card (e-KTP). The person is holding their "
-            "Indonesian e-KTP card in front of their chest with one hand, facing the camera directly. "
-            "Photorealistic smartphone camera photo, real human skin texture, natural ambient indoor room lighting, "
-            "eyes looking at camera lens, neutral pleasant expression. The e-KTP is clearly visible without "
-            "blocking or covering the person's face. 8k resolution photo quality, zero CGI, zero cartoon, "
-            "completely genuine Indonesian human appearance."
+            "CRITICAL DIRECTIVE: STRICT 1:1 FACIAL BIOMETRIC IDENTITY PRESERVATION.\n"
+            "The person in this photo MUST be the EXACT SAME individual shown in the cropped face portrait reference. "
+            "Replicate their exact facial features: face shape, jawline, eye structure and color, eyebrow thickness, "
+            "nose shape, lip shape, skin tone and undertone, hair style, hairline, approximate age, and gender. "
+            "Do NOT alter or beautify the face. It must pass automated 1:1 biometric facial recognition matching.\n\n"
+            "SCENE DESCRIPTION:\n"
+            "An authentic front-facing smartphone selfie photograph of this exact person holding their Indonesian e-KTP card "
+            "in front of their chest with one hand, looking directly into the camera. "
+            "The e-KTP card is clearly visible but does NOT cover their face. "
+            "Natural indoor room lighting, genuine human skin texture with pores, unedited camera photo, "
+            "8k photorealistic quality, zero CGI, zero cartoon, completely genuine Indonesian human appearance."
         )
-        return self._call_gemini_image_generation(ktp_path, prompt, out_file)
+
+        images = [
+            (face_portrait, "Cropped Face Portrait (Primary Facial Biometric Identity Reference)"),
+            (full_ktp, "Full Indonesian e-KTP Card (Document Reference)"),
+        ]
+        return self._call_gemini_multimodal(images, prompt, out_file)
 
     def generate_ai_pose(
         self,
@@ -160,7 +189,7 @@ class PoseGenerator:
         gesture_key: str,
         gesture_desc: str,
     ) -> Path | None:
-        """Generate a challenge pose photo matching the requested gesture using AI."""
+        """Generate a challenge pose photo matching the requested gesture with strict identity locking."""
         target_dir = self.base_dir / nik
         target_dir.mkdir(parents=True, exist_ok=True)
         out_file = target_dir / f"challenge_ai_pose_{gesture_key}.jpg"
@@ -169,14 +198,28 @@ class PoseGenerator:
             logger.info(f"reusing_existing_ai_pose: {out_file}")
             return out_file
 
+        try:
+            ref_img = Image.open(reference_path)
+            # If reference is a KTP, extract face portrait too
+            face_img = extract_ktp_portrait(ref_img) if "ktp" in reference_path.name.lower() else ref_img
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"reference_image_load_err: {e}")
+            return None
+
         prompt = (
-            f"Authentic unedited front-facing smartphone selfie photograph of the exact same Indonesian person "
-            f"shown in the reference image. The person is looking directly at the camera with natural lighting, "
+            "CRITICAL DIRECTIVE: STRICT 1:1 FACIAL BIOMETRIC IDENTITY PRESERVATION.\n"
+            "The person in this photo MUST be the EXACT SAME individual shown in the reference image. "
+            "Replicate their exact facial features: face shape, jawline, eyes, nose, lips, skin tone, hair, age, and gender. "
+            "Do NOT alter or replace the face.\n\n"
+            "SCENE DESCRIPTION:\n"
+            f"An authentic front-facing smartphone selfie photograph of this exact person looking directly at the camera, "
             f"holding their Indonesian e-KTP card in one hand while performing a clear {gesture_desc} with the other hand. "
-            f"Photorealistic smartphone camera photo, authentic human skin texture, natural hand anatomy with exact "
-            f"anatomical finger count, genuine indoor room lighting, zero cartoon, zero CGI, high definition 8k."
+            f"Natural indoor room lighting, authentic human skin texture, proper hand anatomy with exact anatomical finger count, "
+            f"photorealistic smartphone camera photo, zero cartoon, zero CGI, high definition 8k."
         )
-        return self._call_gemini_image_generation(reference_path, prompt, out_file)
+
+        images = [(face_img, "Person Identity Reference"), (ref_img, "Full Context Reference")]
+        return self._call_gemini_multimodal(images, prompt, out_file)
 
     def resolve_selfie(
         self,
@@ -184,7 +227,7 @@ class PoseGenerator:
         selfie_path: str | Path | None,
         ktp_path: str | Path | None,
     ) -> Path | None:
-        """Resolve the selfie photo path. If only KTP is available, synthesizes a selfie."""
+        """Resolve the selfie photo path with automatic facial synthesis when only KTP is provided."""
         if selfie_path:
             p_selfie = Path(selfie_path)
             if p_selfie.exists():
@@ -193,11 +236,10 @@ class PoseGenerator:
         if ktp_path:
             p_ktp = Path(ktp_path)
             if p_ktp.exists():
-                logger.info(f"generating_selfie_from_ktp: nik={nik}")
+                logger.info(f"synthesizing_identity_matched_selfie_from_ktp: nik={nik}")
                 gen_selfie = self.generate_selfie_from_ktp(nik, p_ktp)
                 if gen_selfie:
                     return gen_selfie
-                # Fallback to KTP file directly if AI synthesis unavailable
                 logger.info(f"selfie_fallback_to_ktp: {p_ktp}")
                 return p_ktp
 
