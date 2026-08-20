@@ -23,7 +23,7 @@ logger = get_logger(__name__)
 
 @dataclass
 class RegistrationInput:
-    """All fields required to submit an iDebKu pre-registration form."""
+    """All fields required to submit an iDebKu pre-registration and full registration form."""
 
     nama: str
     nik: str
@@ -34,10 +34,18 @@ class RegistrationInput:
     email: str = ""
     nomor_hp: str = ""
     jenis_debitur: str = "Perseorangan"
+    jenis_kelamin: str = "L"
+    alamat: str = ""
+    kode_provinsi: str = "12"
+    kode_kota: str = "1204"
+    ibu_kandung: str = ""
+    tujuan_permohonan: int = 41
+    foto_ktp_path: str = ""
+    foto_selfie_path: str = ""
+    foto_challenge_path: str = ""
     jd_id: int = 1
     kw_id: int = 1
     ident_id: int = 1
-
 
 def _is_captcha_plausible(text: str) -> bool:
     """Heuristic to check if captcha text looks human-readable."""
@@ -109,6 +117,18 @@ class Orchestrator:
         # (fragment, value) — evaluated in order; first match on a control name wins.
         fragments = [
             ("captcha", captcha_text),
+            ("tdaftar_nama", reg.nama),
+            ("tdaftar_tempat_lahir", reg.tempat_lahir),
+            ("tdaftar_tanggal_lahir", reg.tanggal_lahir),
+            ("tdaftar_alamat", reg.alamat),
+            ("tdaftar_email", reg.email),
+            ("tdaftar_hp", reg.nomor_hp),
+            ("tdaftar_ibu_kandung", reg.ibu_kandung),
+            ("tdaftar_jenkel", reg.jenis_kelamin),
+            ("jenkel", reg.jenis_kelamin),
+            ("province_code", reg.kode_provinsi),
+            ("city_code", reg.kode_kota),
+            ("tmohon_id", str(reg.tujuan_permohonan)),
             ("noidentitas", reg.nik),
             ("noindentitas", reg.nik),
             ("nama", reg.nama),
@@ -122,6 +142,9 @@ class Orchestrator:
             ("kewarganegaraan", str(reg.kw_id)),
             ("ssdebitur", str(reg.kw_id)),
             ("identitas", str(reg.ident_id)),
+            ("alamat", reg.alamat),
+            ("ibu", reg.ibu_kandung),
+            ("kandung", reg.ibu_kandung),
         ]
         for control in soup.find_all(["input", "select", "textarea"]):
             name = control.get("name")

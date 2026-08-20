@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     pre_register_url: HttpUrl = HttpUrl(
         "https://idebku.ojk.go.id/Public/PendaftaranOnline/PreRegister"
     )  # type: ignore[call-arg]
+    register_url: HttpUrl = HttpUrl(
+        "https://idebku.ojk.go.id/Public/PendaftaranOnline/Register"
+    )  # type: ignore[call-arg]
     status_url: HttpUrl = HttpUrl("https://idebku.ojk.go.id/Public/CekStatusLayanan")  # type: ignore[call-arg]
     captcha_url: HttpUrl = HttpUrl("https://idebku.ojk.go.id/get-captcha-image")  # type: ignore[call-arg]
 
