@@ -282,11 +282,12 @@ class PoseGenerator:
             b64_primary = base64.b64encode(buf.getvalue()).decode()
 
         model = settings.agnes_model or "agnes-image-2.0-flash"
+        # Agnes's image endpoint returns a hosted `url` (b64_json is unsupported
+        # and rejected with UnsupportedParamsError) — the url path below fetches it.
         payload: dict[str, Any] = {
             "model": model,
             "prompt": prompt,
             "n": 1,
-            "response_format": "b64_json",
         }
         if b64_primary:
             payload["image"] = b64_primary
