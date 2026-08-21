@@ -7,6 +7,8 @@ __pycache__/
 dist/
 build/
 .env
+# Agnes API key pool (exported from your own gateway; contains secrets)
+agnes_keys.txt
 data/*.db
 data/*.png
 data/ktp/

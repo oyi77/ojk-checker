@@ -7,6 +7,7 @@ import io
 from pathlib import Path
 from unittest import mock
 
+import pytest
 from PIL import Image
 from pydantic import SecretStr
 
@@ -16,6 +17,30 @@ from slik_checker.pose_generator import (
     extract_ktp_portrait,
     parse_challenge_gesture,
 )
+
+
+def _agnes_resp(status: int, payload: dict, text: str = "{}") -> mock.Mock:
+    r = mock.Mock()
+    r.status_code = status
+    r.text = text
+    r.json.return_value = payload
+    return r
+
+
+@pytest.fixture(autouse=True)
+def _reset_agnes_state():
+    """Isolate the class-level Agnes key pool / dead-key cache per test."""
+    settings.agnes_api_key = None
+    settings.agnes_api_keys = []
+    settings.agnes_keys_file = None
+    PoseGenerator._agnes_dead.clear()
+    PoseGenerator._agnes_cursor = 0
+    yield
+    settings.agnes_api_key = None
+    settings.agnes_api_keys = []
+    settings.agnes_keys_file = None
+    PoseGenerator._agnes_dead.clear()
+    PoseGenerator._agnes_cursor = 0
 
 
 def test_parse_challenge_gesture():
@@ -184,3 +209,45 @@ def test_call_agnes_direct_401(tmp_path: Path):
         assert not out.exists()
     finally:
         settings.agnes_api_key = None
+
+
+def test_call_agnes_direct_rotates_past_invalid_key(tmp_path: Path):
+    settings.agnes_api_keys = ["k-bad", "k-good"]
+    pg = PoseGenerator(base_dir=tmp_path)
+    out = tmp_path / "agn_rot" / "selfie.jpg"
+    side = [
+        _agnes_resp(401, {}, "unauthorized"),
+        _agnes_resp(200, {"data": [{"b64_json": _tiny_png_b64()}]}),
+    ]
+    with mock.patch(
+        "slik_checker.pose_generator.requests.post", side_effect=side
+    ) as m:
+        res = pg._call_agnes_direct([(Image.new("RGB", (10, 10)), "x")], "prompt", out)
+    assert res == out
+    assert out.exists()
+    assert m.call_count == 2
+    assert "k-bad" in PoseGenerator._agnes_dead
+
+
+def test_call_agnes_direct_all_keys_fail(tmp_path: Path):
+    settings.agnes_api_keys = ["k1", "k2"]
+    pg = PoseGenerator(base_dir=tmp_path)
+    out = tmp_path / "agn_all" / "selfie.jpg"
+    with mock.patch(
+        "slik_checker.pose_generator.requests.post",
+        return_value=_agnes_resp(503, {}, "server error"),
+    ) as m:
+        res = pg._call_agnes_direct([(Image.new("RGB", (10, 10)), "x")], "prompt", out)
+    assert res is None
+    assert not out.exists()
+    assert m.call_count == 2
+
+
+def test_agnes_key_pool_reads_file(tmp_path: Path):
+    kf = tmp_path / "keys.txt"
+    kf.write_text("sk-a\n# comment\n\nsk-b\n")
+    settings.agnes_api_keys = ["sk-a", "sk-c"]
+    settings.agnes_keys_file = str(kf)
+    PoseGenerator._agnes_dead.add("sk-b")  # simulate a previously-failed key
+    pg = PoseGenerator(base_dir=tmp_path)
+    assert pg._agnes_key_pool() == ["sk-a", "sk-c"]

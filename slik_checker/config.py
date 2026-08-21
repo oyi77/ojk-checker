@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from pydantic import HttpUrl, SecretStr
+from pydantic import HttpUrl, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -88,6 +88,20 @@ class Settings(BaseSettings):
     agnes_api_base: str = "https://apihub.agnes-ai.com/v1"
     agnes_api_key: SecretStr | None = None
     agnes_model: str = "agnes-image-2.0-flash"
+    # Optional pool of additional Agnes keys for automatic rotation. Supply as a
+    # comma- or newline-separated string in AGNES_API_KEYS, or point
+    # AGNES_KEYS_FILE at a file with one key per line. The client rotates through
+    # the full pool (single agnes_api_key + agnes_api_keys + keys file) so a
+    # dead/rate-limited key never blocks image generation.
+    agnes_api_keys: list[str] = []
+    agnes_keys_file: str | None = None
+
+    @field_validator("agnes_api_keys", mode="before")
+    @classmethod
+    def _split_key_pool(cls, v: object) -> list[str]:
+        if isinstance(v, str):
+            return [k.strip() for k in v.replace("\n", ",").split(",") if k.strip()]
+        return list(v) if v else []
     external_captcha_service_url: HttpUrl = HttpUrl("http://2captcha.com/in.php")  # type: ignore[call-arg]
     external_captcha_result_url: HttpUrl = HttpUrl("http://2captcha.com/res.php")  # type: ignore[call-arg]
     external_captcha_poll_interval: int = 5  # seconds

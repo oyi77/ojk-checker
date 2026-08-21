@@ -15,6 +15,7 @@ from __future__ import annotations
 import base64
 import io
 import re
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -254,27 +255,64 @@ class PoseGenerator:
 
         return None
 
+    # --- Agnes direct-call key rotation (class-level shared state) ---
+    # Round-robin cursor + a cache of permanently-invalid keys (401/403). The lock
+    # keeps cursor/dead updates safe across the scheduler + web-UI threads.
+    _agnes_cursor = 0
+    _agnes_dead: set[str] = set()
+    _agnes_lock = threading.Lock()
+
+    def _agnes_key_pool(self) -> list[str]:
+        """Compose the effective Agnes key pool from settings.
+
+        Order: single ``agnes_api_key`` (if set), then ``agnes_api_keys``
+        (inline list), then keys read from ``agnes_keys_file`` (one per line).
+        Duplicates and permanently-failed (dead) keys are dropped.
+        """
+        keys: list[str] = []
+        single = settings.agnes_api_key
+        if single and single.get_secret_value():
+            keys.append(single.get_secret_value())
+        keys.extend(settings.agnes_api_keys or [])
+        if settings.agnes_keys_file:
+            cand = Path(settings.agnes_keys_file)
+            if not cand.is_absolute() and not cand.exists():
+                # Tolerate a daemon launched from a non-repo cwd (like .env).
+                cand = Path(__file__).resolve().parent.parent / settings.agnes_keys_file
+            if cand.exists():
+                for line in cand.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        keys.append(line)
+        seen: set[str] = set()
+        uniq: list[str] = []
+        for k in keys:
+            if k and k not in seen and k not in self._agnes_dead:
+                seen.add(k)
+                uniq.append(k)
+        return uniq
+
     def _call_agnes_direct(
         self,
         images: list[tuple[Image.Image, str]],
         prompt: str,
         out_file: Path,
     ) -> Path | None:
-        """Generate the image via Agnes AI's direct public API (free tier).
+        """Generate the image via Agnes AI's direct public API with key rotation.
 
         Agnes AI exposes an OpenAI-compatible image endpoint at
         ``settings.agnes_api_base`` (default https://apihub.agnes-ai.com/v1).
-        This is independent of the OmniRoute gateway and only requires the user's
-        own free Agnes API key. Returns the written image path on success, else
-        None so the caller falls back further (composite / raw KTP).
+        This is independent of the OmniRoute gateway and requires the user's own
+        free Agnes API key(s). The full key pool is rotated round-robin; a
+        per-key 401/403 marks the key dead (skipped forever), while 429/5xx
+        simply advances to the next key. Returns the written image path on
+        success, else None so the caller falls back further (composite / raw KTP).
         """
-        if not settings.agnes_api_key:
+        pool = self._agnes_key_pool()
+        if not pool:
             return None
 
         base = str(settings.agnes_api_base).rstrip("/")
-        key = settings.agnes_api_key.get_secret_value()
-        headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-
         b64_primary = ""
         if images:
             buf = io.BytesIO()
@@ -292,20 +330,58 @@ class PoseGenerator:
         if b64_primary:
             payload["image"] = b64_primary
 
-        try:
-            resp = requests.post(
-                f"{base}/images/generations", headers=headers, json=payload, timeout=60
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"agnes_direct_err: {e}")
-            return None
+        n = len(pool)
+        with self._agnes_lock:
+            start = self._agnes_cursor % n
+        order = pool[start:] + pool[:start]
 
-        if resp.status_code != 200:
+        last_err = "no keys tried"
+        for i, key in enumerate(order):
+            headers = {
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+            }
+            try:
+                resp = requests.post(
+                    f"{base}/images/generations", headers=headers, json=payload, timeout=60
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"agnes_direct_err: {e}")
+                last_err = f"exception: {e}"
+                continue
+
+            if resp.status_code == 200:
+                out = self._agnes_save(resp, model, out_file)
+                if out is not None:
+                    with self._agnes_lock:
+                        self._agnes_cursor = (start + i + 1) % n
+                    logger.info(
+                        f"agnes_direct_success: key_idx={start + i} pool_size={n} | {out_file}"
+                    )
+                    return out
+                last_err = "200 but no image in response"
+                continue
+
+            if resp.status_code in (401, 403):
+                with self._agnes_lock:
+                    self._agnes_dead.add(key)
+                logger.warning(
+                    f"agnes_direct_key_invalid: status={resp.status_code} | {resp.text[:80]}"
+                )
+                last_err = f"status={resp.status_code}"
+                continue
+
             logger.warning(
                 f"agnes_direct_unsuccessful: status={resp.status_code} | {resp.text[:120]}"
             )
-            return None
+            last_err = f"status={resp.status_code}"
+            continue
 
+        logger.warning(f"agnes_direct_all_keys_failed: {last_err}")
+        return None
+
+    def _agnes_save(self, resp: requests.Response, model: str, out_file: Path) -> Path | None:
+        """Parse an Agnes 200 response and write the image to ``out_file``."""
         try:
             data = resp.json()
         except Exception as e:  # noqa: BLE001
@@ -323,7 +399,6 @@ class PoseGenerator:
             raw = base64.b64decode(b64_str)
             out_file.parent.mkdir(parents=True, exist_ok=True)
             out_file.write_bytes(raw)
-            logger.info(f"agnes_direct_generated_success: model={model} | {out_file}")
             return out_file
         if img_url:
             try:
@@ -331,7 +406,6 @@ class PoseGenerator:
                 if r_fetch.status_code == 200:
                     out_file.parent.mkdir(parents=True, exist_ok=True)
                     out_file.write_bytes(r_fetch.content)
-                    logger.info(f"agnes_direct_downloaded_success: model={model} | {out_file}")
                     return out_file
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"agnes_direct_fetch_err: {e}")

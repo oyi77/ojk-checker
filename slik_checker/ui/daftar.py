@@ -1,11 +1,13 @@
 """Daftar Debitur — register and manage debiturs."""
 
+import os
 import re
 
 import streamlit as st
 
 from slik_checker.models import db
 from slik_checker.orchestrator import orchestrator
+from slik_checker.pose_generator import pose_generator
 
 
 def show() -> None:
@@ -127,3 +129,21 @@ def show() -> None:
                     db.delete_debitur(d["id"])
                     st.warning(f"Debitur '{d['nama']}' dihapus")
                     st.rerun()
+
+            if st.button("Generate Selfie & Pose", key=f"gen_{d['id']}", type="secondary"):
+                nik = d["nik"]
+                ktp_path = d.get("ktp_path") or f"data/ktp/{nik}/ktp.jpg"
+                if not os.path.exists(ktp_path):
+                    st.error(f"KTP tidak ditemukan: {ktp_path}")
+                else:
+                    with st.spinner("Membuat selfie & pose via Agnes..."):
+                        selfie = pose_generator.resolve_selfie(nik, None, ktp_path)
+                        challenge = pose_generator.resolve_pose(nik, selfie, ktp_path, "5A_B")
+                    if selfie and os.path.exists(selfie):
+                        st.image(str(selfie), caption="Selfie (Agnes)")
+                    else:
+                        st.error("Gagal generate selfie")
+                    if challenge and os.path.exists(challenge):
+                        st.image(str(challenge), caption="Pose Challenge (Agnes)")
+                    else:
+                        st.error("Gagal generate pose")
